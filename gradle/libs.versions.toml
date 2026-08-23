@@ -1,0 +1,31 @@
+[versions]
+# Stand: 2026-08. Falls Android Studio beim ersten Sync ein Upgrade von AGP/Gradle
+# vorschlaegt (Upgrade Assistant), einfach annehmen - das ist normal und unkritisch.
+kotlin = "2.2.20"
+agp = "8.11.1"
+composeMultiplatform = "1.11.1"
+androidx-activity-compose = "1.9.3"
+# CameraX: 1.6.1 ist der aktuelle Stable-Zweig (Stand 2026-08).
+camerax = "1.6.1"
+androidx-core = "1.16.0"
+
+[plugins]
+androidApplication = { id = "com.android.application", version.ref = "agp" }
+androidLibrary = { id = "com.android.library", version.ref = "agp" }
+kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
+composeCompiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+
+[libraries]
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
+
+# CameraX — alle vier Artefakte gehoeren zusammen:
+#   core      = Use-Case-Basis (Preview, ImageAnalysis, ...)
+#   camera2   = die konkrete Implementierung auf Basis von Camera2
+#   lifecycle = bindToLifecycle(), bindet Kamera an den Lifecycle der Activity
+#   view      = PreviewView, das fertige Android-View fuer die Vorschau
+camerax-core = { module = "androidx.camera:camera-core", version.ref = "camerax" }
+camerax-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
+camerax-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
+camerax-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }

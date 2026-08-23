@@ -1,0 +1,39 @@
+# XcodeGen-Spezifikation fuer iosApp.xcodeproj. Das .xcodeproj selbst ist NICHT eingecheckt
+# (siehe .gitignore) — es wird aus dieser Datei generiert:
+#
+#   brew install xcodegen   (einmalig, ist auf diesem Rechner schon installiert)
+#   cd iosApp && xcodegen generate
+#
+# Grund fuer XcodeGen statt eines handgeschriebenen .xcodeproj: das .pbxproj-Format ist
+# fehleranfaellig von Hand zu pflegen und laesst sich ohne echtes Xcode nicht verifizieren.
+# Diese Datei kann jeder lesen/aendern (Text), das generierte .xcodeproj ist ein reines
+# Build-Artefakt.
+name: iosApp
+options:
+  bundleIdPrefix: com.florianhaeglsperger.photocoach
+  deploymentTarget:
+    iOS: "14.0"
+settings:
+  base:
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  iosApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: iosApp
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.florianhaeglsperger.photocoach
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        ENABLE_PREVIEWS: YES
+    # Baut das shared-KMP-Modul zu einem shared.framework und bindet es vor jedem
+    # Xcode-Build automatisch ein - kein separater `./gradlew`-Aufruf noetig.
+    preBuildScripts:
+      - name: Compile Kotlin Framework (shared)
+        script: |
+          cd "$SRCROOT/.."
+          ./gradlew :shared:embedAndSignAppleFrameworkForXcode
+        basedOnDependencyAnalysis: false

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Kamera-Berechtigung steht bewusst hier im shared-Modul und nicht in androidApp:
+      der Kamera-Code liegt in diesem Modul, also gehoert auch seine Anforderung hierher.
+      Der Manifest-Merger zieht beides beim Build in androidApp zusammen.
+
+      android:required="false" bei uses-feature, damit die App auch auf Geraeten ohne
+      Kamera installierbar bleibt (z.B. manche Emulator-Images) — der Fehlerfall wird
+      dann zur Laufzeit ueber CameraState.Error abgefangen statt beim Installieren.
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+</manifest>
