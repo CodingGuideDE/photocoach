@@ -5,11 +5,69 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Repository status
 
 Phase 0 (Projekt-Setup) ist angelegt: KMP-Gerueststruktur (`shared/`, `androidApp/`),
-Compose-Multiplatform-UI-Platzhalter, `FrameAnalyzer` als `expect`/`actual` mit Dummy-
-Implementierung auf Android. Die App laesst sich im Android-Emulator starten, zeigt aber
-noch keine echte Kamera-Vorschau (folgt in Phase 1). iOS-Targets sind noch nicht aktiv
-(siehe `shared/src/iosMain/README.md`) — dafuer wird ein volles Xcode.app benoetigt, auf
-diesem Rechner ist bisher nur die Command-Line-Tools-Variante installiert.
+`FrameAnalyzer` als `expect`/`actual` mit Dummy-Implementierung auf Android.
+
+**Kamera-Vorschau (Android) steht.** CameraX `Preview`-Use-Case ueber die
+`expect`/`actual`-Naht `ui/CameraPreview.kt` (commonMain) → `ui/CameraPreview.android.kt`
+(androidMain), Statusdarstellung geteilt in `ui/CameraScreen.kt`. Verifiziert im Emulator:
+Berechtigungsdialog, Kamera bindet, Live-Bild sichtbar.
+
+**Foto-Aufnahme (Android) steht — Phase-0-DoD fuer Android damit erfuellt.**
+`ImageCapture`-Use-Case (`CAPTURE_MODE_MINIMIZE_LATENCY`) im selben `actual`; Speichern
+ueber den MediaStore nach `Pictures/PhotoCoach`, also in die Galerie des Nutzers und nicht
+in den App-Ordner — die Fotos sollen eine Deinstallation ueberleben und teilbar sein.
+Ausloeser und Rueckmeldung liegen in `CameraScreen` (commonMain), gelten also spaeter fuer
+iOS unveraendert.
+
+Design-Prinzip der Naht: **jeder `CameraState` traegt die Aktionen, die in ihm moeglich
+sind** — `PermissionRequired.requestPermission`, `Running.takePhoto`. Die Mechanik ist
+plattformspezifisch, Texte/Layout/Buttons liegen in commonMain.
+
+Im Emulator verifiziert: 1 Tap = 1 Foto, Datei im MediaStore vorhanden, drei schnelle Taps
+erzeugen nur eine Aufnahme (Guard ueber `capturing`, Button wird sichtbar ausgegraut).
+
+Bekannte Luecke: `imageCapture.targetRotation` wird nur beim Binden gesetzt. Dreht der
+Nutzer das Geraet waehrend die App laeuft, wird das Foto falsch herum gespeichert — braucht
+einen `OrientationEventListener`.
+
+**Datenfluss Kamera -> FrameAnalyzer -> UI steht (Android).** `ImageAnalysis`-Use-Case
+(`STRATEGY_KEEP_ONLY_LATEST`, eigener Executor, auf ~10 Hz gedrosselt) liegt in
+`ui/CameraPreview.android.kt` und schickt jedes Frame als `CameraFrame` — jetzt ein duenner
+Wrapper um `ImageProxy` — durch den `FrameAnalyzer`. Ergebnis geht ueber den neuen
+`onAnalysis`-Callback der `CameraPreview`-Naht auf dem Main-Thread nach oben.
+Der Analyzer selbst bleibt bewusst ein Dummy: er uebernimmt nur den echten Frame-Zeitstempel,
+`horizonTiltDegrees`/`saliencyRegions`/`faces` bleiben leer, bis Phase 1 sie befuellt.
+`CameraScreen` zeigt das als provisorisches `AnalysisDebugBadge` (Frame-Zaehler +
+Zeitstempel) — faellt weg, sobald dort das echte ScoreOverlay haengt.
+Im Emulator verifiziert: Zaehler laeuft hoch, Zeitstempel wandert mit, kein Crash.
+
+Wichtig fuer Phase 1: das `ImageProxy` in `CameraFrame` ist nur waehrend des
+`analyze()`-Aufrufs gueltig — der Aufrufer schliesst es danach. Nichts daraus ueber den
+Aufruf hinaus festhalten.
+
+Berechtigungen werden in `shared/src/androidMain/AndroidManifest.xml` deklariert (nicht in
+androidApp) — dort liegt der Kamera-Code. Diese Datei haelt den Berechtigungs-Satz bewusst
+klein, was zum on-device-Versprechen der App gehoert:
+- `ACCESS_NETWORK_STATE` (kommt transitiv ueber `camera-view` → `androidx.media3`) wird per
+  `tools:node="remove"` entfernt
+- `WRITE_EXTERNAL_STORAGE` ist auf `maxSdkVersion=28` begrenzt (ab API 29 schreibt der
+  MediaStore ohne Berechtigung)
+- `READ_EXTERNAL_STORAGE` fuegt der Manifest-Merger automatisch hinzu, sobald WRITE
+  deklariert ist — und zwar OHNE Grenze. Deshalb hier explizit ebenfalls auf
+  `maxSdkVersion=28` gesetzt, sonst stuende auf allen Geraeten ein Zugriff auf die
+  gesamte Fotobibliothek im Play-Store-Eintrag.
+
+Ergebnis nach dem Merge: auf Geraeten ab API 29 fordert die App nur noch CAMERA an. Wer
+hier Dependencies ergaenzt, sollte das gemergte Manifest gegenpruefen
+(`androidApp/build/intermediates/merged_manifest/debug/.../AndroidManifest.xml`).
+
+**iOS-Targets sind aktiv, App laeuft im Simulator** (verifiziert: iPhone 17, iOS 26.5).
+`CameraPreview.ios.kt` prueft die Kamera-Berechtigung echt (Systemdialog getestet), erkennt
+mangels Kamera-Hardware im Simulator korrekt "keine Kamera gefunden" — `AVCaptureSession`/
+Preview/Aufnahme folgen erst mit einem echten iPhone zum Testen (Phase 1). Details, inkl.
+dreier echter Bugs, die dabei auftraten und wie sie behoben wurden (Compose Multiplatform
+1.11.1 KLIB-Resolver-Bug, iosX64 nicht mehr veroeffentlicht, PlistSanityCheck-Crash ohne
+`CADisableMinimumFrameDurationOnPhone`), stehen in `shared/src/iosMain/README.md`.
 
 **Build/Run (Android):**
 - `./gradlew :androidApp:assembleDebug` — Debug-APK bauen
@@ -18,8 +76,19 @@ diesem Rechner ist bisher nur die Command-Line-Tools-Variante installiert.
   (kein separates System-JDK auf diesem Rechner installiert)
 - Emulator "Medium_Phone_API_36.0" ist als AVD vorhanden
 
+**Build/Run (iOS):**
+- `cd iosApp && xcodegen generate && open iosApp.xcodeproj` — Simulator als Ziel waehlen, Run
+  (baut `shared.framework` automatisch mit, siehe `preBuildScripts` in `project.yml`)
+- Oder per CLI: `xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator
+  -destination 'platform=iOS Simulator,name=<Geraetename>' -derivedDataPath iosApp/build build`
+- `xcodegen` ist per Homebrew installiert; `iosApp.xcodeproj` selbst ist NICHT eingecheckt
+  (generiertes Artefakt, siehe `.gitignore`)
+
 Versionen (Stand 2026-08, siehe `gradle/libs.versions.toml`): Kotlin 2.2.20, AGP 8.11.1,
-Compose Multiplatform 1.11.1, Gradle 8.13, compileSdk/targetSdk 35, minSdk 26.
+Compose Multiplatform 1.10.3 (bewusst nicht 1.11.1, siehe iosMain/README.md), Gradle 8.13,
+compileSdk 36, targetSdk 35, minSdk 26, CameraX 1.6.1, iOS-Deploymenttarget 14.0.
+compileSdk musste fuer CameraX 1.6 von 35 auf 36 — targetSdk bleibt bewusst auf 35, das ist
+eine getrennte Entscheidung (Laufzeitverhalten).
 
 - `Planung/Umsetzbarkeit.md` — feasibility research: competitor landscape (GudoCam,
   ComposeAI, SnapFrame, LiveCompose, etc.), which platform APIs cover which features,
@@ -43,8 +112,11 @@ existing competitor apps (per the gap analysis) are:
 
 - **Explainable overlay** — visualize the actual saliency map / detected edges the
   scoring is based on, not just a bare score.
-- **Accessibility coaching** — spoken/haptic composition guidance for blind/low-vision
-  users, driven by the same underlying frame-analysis data as the visual overlay.
+- **Text-based coaching** — proactive, concrete short instructions while framing
+  ("Person etwas weiter rechts, naeher rankommen") instead of only a score or an overlay
+  the user has to interpret. Driven by the same `FrameAnalysis` data as the overlay.
+  (Speech/haptic output for blind/low-vision users was considered and deliberately
+  deprioritised — see Planung/Umsetzbarkeit.md 6.1.)
 
 ## Planned architecture
 
@@ -98,8 +170,8 @@ capability goes behind `FrameAnalyzer`.
 1. MVP — rule-based feedback (rule of thirds, horizon, dead space, portrait framing) live
    in-viewfinder, both platforms.
 2. Explainable overlay + post-capture aesthetic score (NIMA-style model → CoreML + LiteRT).
-3. Accessibility — audio/haptic coaching layer on the same `FrameAnalysis` data, tested
-   with real blind/low-vision users.
+3. Text-based coaching — short, actionable in-viewfinder hints derived from the same
+   `FrameAnalysis` data (template-based, no model needed).
 4. Active directional suggestions via heuristics (saliency → nearest third-point vector).
 5. Story/sequence coach for content creators (shot-type variety, color consistency across
    a marked photo series).

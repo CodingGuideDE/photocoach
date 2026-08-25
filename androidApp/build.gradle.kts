@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.florianhaeglsperger.photocoach.android"
-    compileSdk = 35
+    compileSdk = 36  // siehe shared/build.gradle.kts
 
     defaultConfig {
         applicationId = "com.florianhaeglsperger.photocoach"

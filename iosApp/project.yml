@@ -26,14 +26,41 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.florianhaeglsperger.photocoach
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
         ENABLE_PREVIEWS: YES
+        # Ohne Apple-Entwicklerteam schlaegt Automatic Signing fehl ("requires a
+        # development team"), obwohl der Simulator gar keine Signatur braucht. Deshalb
+        # Signing nur fuer den Simulator-SDK abschalten - ein echtes Geraet verlangt
+        # weiterhin ein Team (DEVELOPMENT_TEAM in dieser Datei ergaenzen, sobald noetig).
+        "CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]": "NO"
+        "CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]": "NO"
+    # Xcodes INFOPLIST_KEY_*-Mechanismus (GENERATE_INFOPLIST_FILE) kennt nur eine feste
+    # Liste von Apple-Standardkeys - eigene/CoreAnimation-Keys wie
+    # CADisableMinimumFrameDurationOnPhone werden dabei stillschweigend verworfen (so
+    # herausgefunden: die App crashte beim Start, obwohl der Key gesetzt schien). Deshalb
+    # hier stattdessen XcodeGens eigener info.properties-Mechanismus, der eine echte
+    # Info.plist mit exakt diesen Keys schreibt.
+    info:
+      path: Generated-Info.plist
+      properties:
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UILaunchScreen: {}
+        # Ohne diesen Key crasht iOS die App sofort beim Aufruf von
+        # AVCaptureDevice.requestAccessForMediaType (CameraPreview.ios.kt).
+        NSCameraUsageDescription: "PhotoCoach braucht Zugriff auf die Kamera, um die Komposition im Sucher zu bewerten. Die Bilder bleiben dabei auf dem Geraet."
+        # Ohne diesen Key crasht Compose Multiplatform ab 1.7 beim Start absichtlich
+        # (PlistSanityCheck) - ohne ihn wuerde die UI auf ProMotion-Geraeten (120 Hz)
+        # nur auf 60 Hz gedrosselt animieren, ohne dass man das leicht bemerkt.
+        CADisableMinimumFrameDurationOnPhone: true
     # Baut das shared-KMP-Modul zu einem shared.framework und bindet es vor jedem
     # Xcode-Build automatisch ein - kein separater `./gradlew`-Aufruf noetig.
     preBuildScripts:
       - name: Compile Kotlin Framework (shared)
         script: |
           cd "$SRCROOT/.."
+          # Kein System-JDK auf diesem Rechner installiert (siehe CLAUDE.md) - Xcodes
+          # Build-Environment kennt JAVA_HOME nicht, deshalb hier explizit auf das
+          # JBR zeigen, das Android Studio mitbringt.
+          export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
           ./gradlew :shared:embedAndSignAppleFrameworkForXcode
         basedOnDependencyAnalysis: false

@@ -3,7 +3,12 @@
 # vorschlaegt (Upgrade Assistant), einfach annehmen - das ist normal und unkritisch.
 kotlin = "2.2.20"
 agp = "8.11.1"
-composeMultiplatform = "1.11.1"
+# Bewusst 1.10.3 statt 1.11.1: 1.11.1 hat einen KLIB-Resolver-Bug beim iOS-Compile
+# ("KLIB resolver: Could not find ...", trifft org.jetbrains.compose.animation:animation-core
+# und andere transitive Artefakte) - vermutlich eine Metadaten-Inkonsistenz im neuen
+# AndroidX-Convergence-Dependency-Graph, siehe JetBrains/compose-multiplatform#CMP-7959
+# fuer das gleiche Fehlerbild bei anderer Artefakt-Kombination. 1.10.3 kompiliert sauber.
+composeMultiplatform = "1.10.3"
 androidx-activity-compose = "1.9.3"
 # CameraX: 1.6.1 ist der aktuelle Stable-Zweig (Stand 2026-08).
 camerax = "1.6.1"

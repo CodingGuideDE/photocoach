@@ -12,11 +12,15 @@ kotlin {
         }
     }
 
-    // iOS-Targets bewusst noch nicht aktiviert: dafuer wird ein volles Xcode.app
-    // (nicht nur die Command Line Tools) benoetigt, um die Apple-Plattform-Header
-    // fuers cinterop aufzuloesen. Sobald Xcode installiert ist, hier ergaenzen:
-    //   iosX64(); iosArm64(); iosSimulatorArm64()
-    // und einen entsprechenden iosMain-Sourceset unter src/iosMain anlegen.
+    // Xcode ist jetzt installiert (siehe shared/src/iosMain/README.md fuer den Stand).
+    // iosX64 (Intel-Simulator) bewusst weggelassen: Compose Multiplatform 1.11.1
+    // veroeffentlicht dafuer keine Artefakte mehr, und dieser Mac ist Apple Silicon.
+    listOf(iosArm64(), iosSimulatorArm64()).forEach {
+        it.binaries.framework {
+            baseName = "shared"
+            isStatic = true
+        }
+    }
 
     sourceSets {
         commonMain.dependencies {
@@ -24,7 +28,9 @@ kotlin {
             implementation(compose.foundation)
             implementation(compose.material3)
             implementation(compose.ui)
-            implementation(compose.components.resources)
+            // compose.components.resources bewusst nicht eingebunden: wird bisher nirgends
+            // verwendet (keine Bild-/Font-Ressourcen im Projekt) und loeste beim
+            // iOS-Compile einen KLIB-Resolver-Fehler aus. Bei Bedarf spaeter wieder rein.
         }
 
         androidMain.dependencies {
@@ -46,7 +52,9 @@ kotlin {
 
 android {
     namespace = "com.florianhaeglsperger.photocoach.shared"
-    compileSdk = 35
+    // compileSdk 36 ist Pflicht ab CameraX 1.6 — betrifft nur, gegen welche APIs
+    // kompiliert wird. targetSdk (= Laufzeitverhalten) bleibt bewusst auf 35.
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 26

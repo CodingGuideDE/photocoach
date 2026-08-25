@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!--
       Kamera-Berechtigung steht bewusst hier im shared-Modul und nicht in androidApp:
@@ -12,5 +13,44 @@
     -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
+
+    <!--
+      Fotos werden ueber den MediaStore in der Galerie abgelegt. Ab API 29 (Scoped Storage)
+      geht das ohne Berechtigung; nur auf API 26-28 wird noch geschrieben im klassischen
+      Sinn. maxSdkVersion=28 sorgt dafuer, dass neuere Geraete die Berechtigung gar nicht
+      erst angeboten bekommen — sonst stuende im Play-Store-Eintrag ein Speicherzugriff,
+      den die App dort nicht braucht.
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!--
+      READ_EXTERNAL_STORAGE fuegt der Manifest-Merger von sich aus hinzu, sobald
+      WRITE_EXTERNAL_STORAGE deklariert ist — allerdings OHNE maxSdkVersion. Das stuende
+      dann auf allen Android-Versionen im Play-Store-Eintrag als Zugriff auf die gesamte
+      Fotobibliothek, obwohl die App nie fremde Fotos liest.
+
+      Deshalb hier explizit mit derselben Grenze deklarieren: auf API 26-28 aendert das
+      nichts (gleiche Berechtigungsgruppe wie WRITE, wird ohnehin zusammen erteilt), ab
+      API 29 verschwindet sie ganz.
+    -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!--
+      androidx.media3:media3-common kommt transitiv ueber camera-view herein und
+      deklariert ACCESS_NETWORK_STATE. Die App arbeitet vollstaendig on-device und nutzt
+      die Berechtigung nirgends — sie wuerde nur im Play-Store-Eintrag als
+      Netzwerk-Zugriff auftauchen und dem Datenschutz-Versprechen widersprechen.
+      Deshalb hier gezielt aus dem gemergten Manifest entfernen.
+
+      Sollte spaeter doch Netzwerk gebraucht werden (Phase 7, Duell-Modus), diese
+      Zeile wieder loeschen statt eine zweite Deklaration hinzuzufuegen.
+    -->
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE"
+        tools:node="remove" />
 
 </manifest>

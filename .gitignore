@@ -12,3 +12,9 @@ captures/
 xcuserdata/
 *.xcuserstate
 DerivedData/
+# von XcodeGen generiert (aus iosApp/project.yml) - nicht einchecken
+iosApp/*.xcodeproj/
+iosApp/Generated-Info.plist
+
+# Rohvideos/Content-Assets - zu gross fuers Repo, bleiben lokal
+Planung/Instagram/*.mp4
