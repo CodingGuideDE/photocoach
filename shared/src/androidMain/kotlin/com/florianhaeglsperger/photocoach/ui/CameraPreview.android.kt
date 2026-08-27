@@ -32,6 +32,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.florianhaeglsperger.photocoach.capture.CameraFrame
 import com.florianhaeglsperger.photocoach.capture.FrameAnalyzer
+import com.florianhaeglsperger.photocoach.capture.HorizonSensor
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 import java.text.SimpleDateFormat
 import java.util.concurrent.Executors
@@ -124,6 +125,19 @@ actual fun CameraPreview(
 
     val frameAnalyzer = remember { FrameAnalyzer() }
 
+    // Der Horizont kommt auf Android aus dem Schwerkraft-Sensor, nicht aus dem Bild
+    // (siehe HorizonSensor fuer die Einschraenkung, die das mit sich bringt).
+    val horizonSensor = remember(context) { HorizonSensor(context) }
+
+    DisposableEffect(horizonSensor) {
+        horizonSensor.start()
+        onDispose {
+            horizonSensor.stop()
+            // Analyzer haengt am selben Lebenszyklus: gibt den ML-Kit-Detektor frei.
+            frameAnalyzer.close()
+        }
+    }
+
     // Eigener Thread fuer die Analyse: sie darf weder den Main-Thread blockieren (UI-Ruckler)
     // noch den CameraX-internen Thread (Vorschau-Ruckler). Ab Phase 1 laeuft hier die
     // eigentliche Modell-Inferenz.
@@ -147,7 +161,9 @@ actual fun CameraPreview(
                         val nowMs = System.currentTimeMillis()
                         if (nowMs - lastAnalysisMs >= ANALYSIS_INTERVAL_MS) {
                             lastAnalysisMs = nowMs
-                            val result = frameAnalyzer.analyze(CameraFrame(imageProxy))
+                            val result = frameAnalyzer.analyze(
+                                CameraFrame(imageProxy, horizonSensor.currentTiltDegrees()),
+                            )
                             // Zurueck auf den Main-Thread, damit die UI das Ergebnis
                             // direkt in Compose-State schreiben kann.
                             mainExecutor.execute { currentOnAnalysis(result) }
@@ -211,8 +227,11 @@ actual fun CameraPreview(
                     // falsch herum liegen. Nur beim Binden gesetzt — dreht der Nutzer das
                     // Geraet waehrend die App laeuft, muesste ein OrientationEventListener
                     // nachziehen (offen, siehe CLAUDE.md).
-                    imageCapture.targetRotation =
-                        previewView.display?.rotation ?: Surface.ROTATION_0
+                    val displayRotation = previewView.display?.rotation ?: Surface.ROTATION_0
+                    imageCapture.targetRotation = displayRotation
+                    // Ohne das meldet ein bewusst quer gehaltenes Geraet konstant 90 Grad
+                    // Neigung, obwohl es fuer den Nutzer gerade ist.
+                    horizonSensor.displayRotation = displayRotation
 
                     // unbindAll() vor dem Binden: sonst wirft CameraX beim erneuten
                     // Durchlauf (z.B. nach Berechtigungserteilung) einen Konflikt.

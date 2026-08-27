@@ -46,6 +46,23 @@ kotlin {
             implementation(libs.androidx.activity.compose)
             // ContextCompat.getMainExecutor
             implementation(libs.androidx.core.ktx)
+
+            // Gesichtserkennung fuer FrameAnalysis.faces (Phase 1). Das Modell ist im
+            // Artefakt gebuendelt, laeuft on-device und laedt nichts nach.
+            implementation(libs.mlkit.face.detection)
+        }
+
+        androidUnitTest.dependencies {
+            // Fuer Tests von androidMain-Code, der ohne Geraet auskommt (z.B. die
+            // Winkel-Mathematik in HorizonSensor.kt).
+            implementation(kotlin("test"))
+        }
+
+        commonTest.dependencies {
+            // Regeln in domain/ sind pure Funktionen von FrameAnalysis auf einen Hinweis —
+            // genau das, was sich ohne Kamera und ohne Emulator testen laesst. Ausfuehren
+            // mit: ./gradlew :shared:allTests
+            implementation(kotlin("test"))
         }
     }
 }

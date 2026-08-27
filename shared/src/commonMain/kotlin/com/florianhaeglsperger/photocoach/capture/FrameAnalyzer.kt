@@ -13,4 +13,12 @@ expect class CameraFrame
  */
 expect class FrameAnalyzer() {
     fun analyze(frame: CameraFrame): FrameAnalysis
+
+    /**
+     * Gibt plattformspezifische Ressourcen frei (Android: den ML-Kit-Detektor).
+     *
+     * Muss aufgerufen werden, wenn der Analyzer nicht mehr gebraucht wird — sonst bleiben
+     * Modelle im Speicher. Danach darf [analyze] nicht mehr aufgerufen werden.
+     */
+    fun close()
 }

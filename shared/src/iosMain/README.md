@@ -3,7 +3,36 @@
 Xcode ist installiert, die iOS-Targets sind aktiv, die App laeuft im iOS-Simulator
 (verifiziert: `iPhone 17`, iOS 26.5).
 
-- `FrameAnalyzer.ios.kt` — Dummy-`actual`, analog zu androidMain (Phase 1: echte Analyse)
+- `FrameAnalyzer.ios.kt` — **Plan 3.1 implementiert**: `VNDetectHorizonRequest`,
+  `VNGenerateAttentionBasedSaliencyImageRequest` und `VNDetectFaceRectanglesRequest` in
+  einem `performRequests`-Durchlauf, Ergebnisse in `FrameAnalysis` gemappt.
+  `CameraFrame` haelt jetzt einen `CVPixelBufferRef` statt leer zu sein.
+  Noch **nicht** angebunden: es gibt keine Frame-Quelle — `AVCaptureVideoDataOutput`
+  fehlt, `analyze()` wird in der App nie aufgerufen (nur in Tests).
+## Vision im Simulator: laeuft, rechnet aber nicht (Messung 27.08.2026)
+
+Wichtig fuer jede weitere Arbeit an `FrameAnalyzer.ios.kt`:
+
+**Die Vision-Requests sind im Simulator ausfuehrbar, die Saliency-Modelle rechnen dort
+aber nicht.** `performRequests` meldet Erfolg, es kommt eine `VNSaliencyImageObservation`
+mit korrekt dimensionierter 68x68-Heatmap zurueck — deren Inhalt ist jedoch konstant und
+haengt nicht vom Bild ab.
+
+Nachgemessen mit drei Bildern (einfarbige Flaeche, helles Rechteck, Streifenmuster mit
+maximalem Kontrast): alle drei ergeben dieselbe Heatmap, `max=0.36`, identische Verteilung.
+Objectness-basiert dasselbe Bild mit `max=0.01`. Betrifft **beide** Eingabewege
+(`CVPixelBuffer` und `CGImage`) und ist unabhaengig davon, ob der Buffer IOSurface-gestuetzt
+ist.
+
+Konsequenz fuer Tests: im Simulator laesst sich die *Verarbeitungskette* pruefen (Buffer
+rein, `FrameAnalysis` raus, Koordinaten normiert, Zeitstempel, kein Absturz, mehrfach
+aufrufbar) — die *inhaltliche* Richtigkeit der Saliency nicht. Dafuer braucht es ein
+echtes iPhone. Gesichtserkennung ist bisher ungeprueft: sie laeuft durch, ob sie im
+Simulator wirklich Gesichter findet, wurde mangels Testfoto nicht verifiziert.
+
+Nicht davon betroffen und vollstaendig im Simulator getestet ist die Koordinaten-Umrechnung
+(`visionBoxToFaceRect`, siehe `VisionCoordinatesTest`) — reine Mathematik, kein Modell.
+
 - `ui/CameraPreview.ios.kt` — `actual`-Implementierung mit echtem Berechtigungs-Flow
   (`AVCaptureDevice.requestAccessForMediaType`, System-Dialog getestet) und echter
   Geraete-Erkennung. **Kein `AVCaptureSession`/Preview/Aufnahme** — der iOS-Simulator hat

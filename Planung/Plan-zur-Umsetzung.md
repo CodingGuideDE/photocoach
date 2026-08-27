@@ -98,7 +98,7 @@ kann ein Foto auslösen und lokal speichern.
 - [ ] `RuleOfThirdsRule`: Abstand der größten Saliency-Region zu den 4 Schnittpunkten
       berechnen, Score + Richtungshinweis ("Motiv 12% zu weit links von der optimalen
       Position")
-- [ ] `HorizonRule`: Warnung bei `horizonTiltDegrees` > 2°
+- [x] `HorizonRule`: Warnung bei `horizonTiltDegrees` > 2°
 - [ ] `DeadSpaceRule`: Anteil des Bilds ohne Saliency pro Bildhälfte vergleichen,
       Warnung bei starker Asymmetrie ohne erkennbaren Grund (z. B. Blickrichtung)
 - [ ] `PortraitFramingRule`: bei erkanntem Gesicht — Kopf nicht zu weit oben/unten
@@ -107,6 +107,155 @@ kann ein Foto auslösen und lokal speichern.
 - [ ] `CompositionScorer`: kombiniert alle Regel-Ergebnisse zu einem einzigen
       0-100-Live-Score + priorisierter Liste an Hinweisen (nur 1 Hinweis gleichzeitig
       anzeigen, wichtigsten zuerst — sonst Overload)
+
+#### 3.2.1 `RuleOfThirdsRule` — konkrete Umsetzung
+
+**Ausgangslage (Stand 27.08.2026).** Zwei Dinge bestimmen den Zuschnitt dieser Aufgabe:
+
+1. `saliencyRegions` ist **nur auf iOS** echt (Vision-Attention-Saliency, auf ein 12×12-Raster
+   heruntergerechnet). Auf Android ist das Feld weiterhin leer, weil die TFLite-Modell-
+   Entscheidung aussteht (§11). Eine Regel, die sich allein auf Saliency stützt, wäre also
+   auf Android wirkungslos — und würde die Plattformen inhaltlich auseinanderlaufen lassen.
+2. `faces` ist auf beiden Plattformen echt (Android ML Kit, iOS `VNDetectFaceRectangles`).
+   Ein erkanntes Gesicht ist ohnehin der verlässlichere Motiv-Anker als generische Saliency —
+   die Regel sollte es also *grundsätzlich* bevorzugen, nicht nur als Notlösung.
+
+Daraus folgt der Zuschnitt: Die Regel arbeitet nicht direkt auf `saliencyRegions`, sondern
+auf einem daraus abgeleiteten **Motivpunkt**. Damit ist sie heute schon vollständig
+testbar und auf beiden Plattformen live wirksam, und sie wird auf Android automatisch
+besser, sobald Saliency dazukommt — ohne dass die Regel selbst sich ändert.
+
+---
+
+**Schritt 1 — `FrameAnalysis` um das Seitenverhältnis ergänzen**
+
+- [ ] `aspectRatio: Float` (Breite/Höhe des aufrecht gedrehten Analyse-Frames) in
+      `FrameAnalysis` aufnehmen, auf Android aus `uprightWidth/uprightHeight` befüllen
+
+Grund: In normierten 0–1-Koordinaten ist ein Versatz von 0,1 in x eine andere physische
+Strecke als 0,1 in y. Ohne Korrektur bewertet die Regel im Hochformat vertikale Abweichungen
+systematisch zu milde. Das Feld fehlt bisher im Contract aus §1 und muss dort mit ergänzt
+werden.
+
+**Schritt 2 — Motivbestimmung (`domain/subject/`)**
+
+```kotlin
+data class SubjectPoint(
+    val x: Float,               // normiert 0..1
+    val y: Float,
+    val confidence: Float,      // 0..1
+    val source: SubjectSource,  // FACE | SALIENCY
+)
+
+fun interface SubjectResolver {
+    fun resolve(frame: FrameAnalysis): SubjectPoint?
+}
+```
+
+- [ ] `DefaultSubjectResolver` implementieren, Reihenfolge:
+      1. **Gesicht vorhanden** → Mittelpunkt des flächengrößten `FaceRect`, `confidence = 1.0`
+      2. **Sonst Saliency** → stärksten `SaliencyPoint` nehmen, dann den gewichteten
+         Schwerpunkt aller Punkte im Umkreis von 0,15 um ihn herum bilden
+      3. **Sonst** `null`
+- [ ] Bewusst **kein** Schwerpunkt über alle Saliency-Punkte: bei zwei Motiven links und
+      rechts läge der Schwerpunkt genau in der Mitte — die Regel würde ein Motiv melden,
+      das es gar nicht gibt. Der Umkreis-Filter verhindert das.
+
+Diese Zwischenschicht ist zugleich die Stelle, an der die unterschiedliche Semantik der
+beiden Plattformen (Apples Attention-Saliency vs. ein Segmentierungsmodell auf Android)
+auf **eine** definierte Bedeutung gebracht wird: „geschätzter Mittelpunkt des Hauptmotivs".
+
+**Schritt 3 — Geometrie (`domain/geometry/Thirds.kt`)**
+
+- [ ] Die vier Schnittpunkte als Konstanten: (⅓,⅓), (⅔,⅓), (⅓,⅔), (⅔,⅔)
+- [ ] Seitenverhältnis-korrigierte Distanz, gerechnet in Einheiten der **Bildbreite**:
+
+```kotlin
+fun distance(ax: Float, ay: Float, bx: Float, by: Float, aspectRatio: Float): Float {
+    val dx = bx - ax
+    val dy = (by - ay) / aspectRatio   // 1/aspectRatio = Höhe/Breite
+    return sqrt(dx * dx + dy * dy)
+}
+```
+
+**Schritt 4 — Regel-Interface + `RuleOfThirdsRule` (`domain/rules/`)**
+
+```kotlin
+sealed interface RuleResult {
+    data object NotApplicable : RuleResult          // kein Motiv erkennbar
+    data class Evaluated(val score: Float, val detail: RuleDetail) : RuleResult
+}
+```
+
+- [ ] `NotApplicable` ≠ Score 0 — ohne erkanntes Motiv hat die Regel *keine* Meinung.
+      Ein 0-Score würde den Gesamtscore fälschlich nach unten ziehen und den Nutzer
+      für etwas rügen, das die App schlicht nicht sehen kann.
+- [ ] Score-Kennlinie: Distanz 0 → 1.0; ab 0,04 beginnt der Abfall; bei 0,167
+      (= Abstand Bildmitte ↔ Drittel-Linie) → 0.0. Dazwischen `smoothstep` statt linear,
+      damit kleine Wackler nahe am Optimum den Score nicht sichtbar zappeln lassen.
+- [ ] Die Mitte ist **kein** Fehler: Ein mittig platziertes Motiv landet bei Score ≈ 0,
+      aber die Regel bekommt im `CompositionScorer` nur mittleres Gewicht — Symmetrie ist
+      eine legitime Bildsprache, keine Regelverletzung.
+- [ ] `RuleDetail` trägt Motivpunkt, gewählten Zielpunkt und den Versatz mit — Phase 2
+      (erklärbares Overlay) und Phase 4 (Richtungspfeil) zeichnen genau daraus.
+
+**Schritt 5 — Zielpunkt stabilisieren**
+
+- [ ] Nächstgelegenen der vier Punkte wählen — aber **mit Hysterese**: der bisher gewählte
+      Zielpunkt bleibt gültig, solange kein anderer mindestens 15 % näher liegt
+
+Ohne das kippt die Wahl bei einem Motiv nahe der Bildmitte zwischen zwei fast gleich weit
+entfernten Punkten hin und her, und der Hinweis springt im Sekundentakt zwischen „links"
+und „rechts". Der Zustand gehört **nicht** in die Regel (die bleibt eine reine Funktion),
+sondern in einen `ThirdsTargetTracker`, den die aufrufende Schicht über Frames hinweg hält.
+
+**Schritt 6 — Hinweistext (`domain/coaching/`)**
+
+- [ ] Formulierung **beschreibend**, nicht anweisend: „Motiv sitzt 12 % links vom
+      Drittelpunkt" — Versatz in Prozent der Bildbreite, gerundet
+- [ ] Unter 5 % Versatz keinen Hinweis ausgeben (das ist innerhalb der Messungenauigkeit
+      der Motivbestimmung)
+
+⚠️ **Falle für Phase 4:** Handlungsanweisungen sind *umgekehrt* zum Versatz. Sitzt das Motiv
+zu weit links im Bild, muss die Kamera nach **links** geschwenkt werden, damit das Motiv im
+Bild nach rechts wandert. In Phase 1 wird deshalb bewusst nur beschrieben, nicht angewiesen —
+die Umkehrung gehört zusammen mit dem Pfeil-Indikator in Phase 4 und will dort einmal
+sauber durchdacht und getestet werden.
+
+**Testfälle (`commonTest`, Bausteine liegen in `TestFrames.kt` bereit)**
+
+- [ ] Motiv exakt auf (⅓,⅓) → Score 1,0
+- [ ] Motiv exakt in der Bildmitte → Score ≈ 0, kein Absturz, `Evaluated` (nicht `NotApplicable`)
+- [ ] Kein Gesicht, keine Saliency → `NotApplicable`
+- [ ] Gesicht **und** Saliency vorhanden, an verschiedenen Stellen → Gesicht gewinnt
+- [ ] Zwei Saliency-Punkte links und rechts → Motivpunkt landet auf einem der beiden,
+      **nicht** in der Mitte
+- [ ] Gleicher normierter Versatz in Hoch- und Querformat → unterschiedlicher Score
+      (belegt, dass `aspectRatio` wirkt)
+- [ ] Motiv wandert langsam über die Bildmitte → Zielpunkt wechselt **einmal**, nicht mehrfach
+- [ ] Versatz 3 % → kein Hinweistext; Versatz 12 % → Text nennt „12 %"
+
+**Reihenfolge & Aufwand**
+
+| Schritt | Aufwand |
+|---|---|
+| 1 — `aspectRatio` in Contract + Android | 0,5 Tag |
+| 2 — `SubjectResolver` + Tests | 1 Tag |
+| 3 — Geometrie + Tests | 0,5 Tag |
+| 4 — Regel + Score-Kennlinie + Tests | 1 Tag |
+| 5 — Zielpunkt-Hysterese + Test | 0,5 Tag |
+| 6 — Hinweistext + Anbindung ans UI | 1 Tag |
+| **Summe** | **~4,5 Tage** |
+
+Schritte 2–5 laufen vollständig in `commonTest` — ohne Emulator, ohne Kamera, in
+Millisekunden. Erst Schritt 6 braucht wieder ein Gerät.
+
+**Bewusst nicht in Phase 1:** Augenhöhe statt Gesichtsmitte als Anker (gehört zu
+`PortraitFramingRule`), Goldener Schnitt als alternatives Raster, Motiv-*Fläche* statt
+Motiv-*Punkt*, und Blickrichtungs-abhängige Wahl des Zielpunkts (links/rechts je nachdem,
+wohin die Person schaut) — Letzteres ist der naheliegendste Ausbau direkt nach Phase 1.
+
+---
 
 ### 3.3 Android-Implementierung von `FrameAnalyzer`
 - [ ] CameraX `ImageAnalysis`-Pipeline für Frame-Zugriff
@@ -251,17 +400,17 @@ Umsetzt Priorität aus Umsetzbarkeit.md Abschnitt 6.5. Bewusst spät, da Backend
 | 0 — Setup | Grundgerüst beide Plattformen | 1 Woche |
 | 1 — MVP Regelbasiert | Kern-Feedback beide Plattformen | 4-5 Wochen |
 | 2 — Erklärbares Overlay + Score | | 3 Wochen |
-| 3 — Barrierefreiheit | | 2-3 Wochen |
+| 3 — Textbasiertes Coaching | | 1-2 Wochen |
 | 4 — Aktive Hinweise (Heuristik) | | 3-4 Wochen |
 | 5 — Story-Coach | | 2-3 Wochen |
 | 6 — Eigenes ML-Modell | optional | offen (Monate) |
 | 7 — Duell-Modus | optional | offen |
 | 8 — Politur & Release | | 2-3 Wochen |
-| **Kern-Pfad (0-3+8, ohne Optionales)** | **echter, differenzierter MVP für beide Plattformen** | **~15-18 Wochen** |
+| **Kern-Pfad (0-3+8, ohne Optionales)** | **echter, differenzierter MVP für beide Plattformen** | **~14-17 Wochen** |
 
 **Empfehlung unverändert:** Nach Phase 1 innehalten und ehrlich bewerten, ob sich
 der Aufwand für dich noch lohnt — das ist bereits ein kompletter, vorzeigbarer MVP.
-Phase 2 (erklärbares Overlay) und Phase 3 (Barrierefreiheit) sind die Stellen, an
+Phase 2 (erklärbares Overlay) und Phase 3 (Textbasiertes Coaching) sind die Stellen, an
 denen sich die App von der bestehenden Konkurrenz abhebt — dort lohnt sich
 Sorgfalt am meisten.
 

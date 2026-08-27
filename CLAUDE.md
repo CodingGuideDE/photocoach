@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Pflegehinweis (verbindlich)
+
+Diese Datei nach jeder abgeschlossenen Aufgabe aktualisieren — neuer Stand unter
+"Repository status" ergänzen, nicht nur im Kopf behalten oder nur in `Planung/Progress.md`
+festhalten. Neu entdeckte Bugs/Lücken gehören ebenfalls sofort hier rein (siehe bestehende
+"Bekannte Luecke"-Einträge als Vorbild), auch wenn sie noch nicht behoben sind.
+
 ## Repository status
 
 Phase 0 (Projekt-Setup) ist angelegt: KMP-Gerueststruktur (`shared/`, `androidApp/`),
@@ -68,6 +75,39 @@ Preview/Aufnahme folgen erst mit einem echten iPhone zum Testen (Phase 1). Detai
 dreier echter Bugs, die dabei auftraten und wie sie behoben wurden (Compose Multiplatform
 1.11.1 KLIB-Resolver-Bug, iosX64 nicht mehr veroeffentlicht, PlistSanityCheck-Crash ohne
 `CADisableMinimumFrameDurationOnPhone`), stehen in `shared/src/iosMain/README.md`.
+
+**Tests.** `./gradlew :shared:allTests` — laeuft auf Android UND im iOS-Simulator.
+- `shared/src/commonTest/.../domain/TestFrames.kt` — Fixtures, um `FrameAnalysis`-Situationen
+  zu beschreiben (`frame(...)`, `faceAt(...)`, `subjectAt(...)`, Konstanten `THIRD_LEFT` etc.).
+  **Regeln in `domain/rules/` gehoeren hierueber getestet, nicht am Emulator** — sie sind pure
+  Funktionen von `FrameAnalysis` auf einen Hinweis.
+- `shared/src/commonTest/.../domain/rules/HorizonRuleTest.kt` — erste Regel aus Plan 3.2
+  (`domain/rules/HorizonRule.kt` + `Rule.kt` fuer den Contract). 7/7 gruen auf Android und
+  iOS-Simulator. Haengt provisorisch als zweite Zeile im `AnalysisDebugBadge`
+  (`CameraScreen.kt`), bis dort das echte ScoreOverlay (Plan 3.4) haengt.
+- `shared/src/androidUnitTest/.../capture/HorizonSensorTest.kt` — Winkel-Mathematik der
+  Horizont-Erkennung. Achtung bei Aenderungen: `Display.getRotation()` meldet die Drehung der
+  Grafik, nicht des Geraets, beides ist gegenlaeufig. Die Konvention steht als Kommentar im
+  Test — sie war beim Schreiben schon einmal vertauscht.
+- **Bekannt rot (Stand 2026-08-27, nicht Teil der HorizonRule-Aenderung):**
+  `FrameAnalyzerTest."Saliency verschiebt sich..."` und `"...reagiert ueberhaupt auf den
+  Bildinhalt"` auf `iosSimulatorArm64` — noch nicht untersucht.
+
+**Stand `FrameAnalysis`:** `faces` (Android: ML Kit, iOS: Vision) und `horizonTiltDegrees`
+(Android: Schwerkraft-Sensor, iOS: `VNDetectHorizonRequest`) sind auf beiden Plattformen
+echt. Vorzeichen-Konvention (positiv = rechts tiefer) steht verbindlich am Feld in
+`FrameAnalysis.kt` — fuer iOS aus der Vision-Rotationsrichtung hergeleitet, aber **noch
+nicht an einem echten Geraet verifiziert**. `saliencyRegions`: auf Android noch leer
+(offene Modell-Entscheidung, Plan 11), auf iOS ueber
+`VNGenerateAttentionBasedSaliencyImageRequest` echt (siehe die zwei bekannt roten Tests
+oben).
+
+`FrameAnalyzer` hat jetzt ein `close()` (gibt den ML-Kit-Detektor frei), aufgerufen aus dem
+`DisposableEffect` in `CameraPreview.android.kt`.
+
+**Noch nicht auf Geraet/Emulator verifiziert:** Gesichtserkennung und Neigungswert im
+laufenden Betrieb. Build und Unit-Tests sind gruen, aber das Debug-Badge (zeigt jetzt
+Neigung + Gesichter-Anzahl) wurde noch nicht live gesehen — der Emulator hing beim Testen.
 
 **Build/Run (Android):**
 - `./gradlew :androidApp:assembleDebug` — Debug-APK bauen

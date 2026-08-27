@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
+import com.florianhaeglsperger.photocoach.domain.rules.HorizonRule
 import kotlinx.coroutines.delay
 
 /** Wie lange die Rueckmeldung nach dem Ausloesen stehen bleibt. */
@@ -149,8 +150,9 @@ fun CameraScreen(modifier: Modifier = Modifier) {
  * Provisorische Anzeige, dass der Datenfluss Kamera -> FrameAnalyzer -> UI wirklich laeuft.
  *
  * Bewusst haesslich und offensichtlich temporaer: sie faellt weg, sobald hier in Phase 1/2
- * das echte ScoreOverlay haengt. Solange `FrameAnalyzer` nur den Zeitstempel befuellt, ist
- * das der einzige Weg zu sehen, ob die Pipeline steht.
+ * das echte ScoreOverlay haengt (Plan 3.4). Solange dort noch nichts haengt, ist die
+ * Hinweiszeile hier auch der einzige Weg, `HorizonRule` (und spaeter die anderen Regeln aus
+ * Plan 3.2) live zu sehen statt nur per Unit-Test.
  */
 @Composable
 private fun AnalysisDebugBadge(
@@ -158,15 +160,35 @@ private fun AnalysisDebugBadge(
     frameCount: Int,
     modifier: Modifier = Modifier,
 ) {
-    Text(
-        text = "debug · $frameCount Frames · t=${analysis.timestampMs} ms",
-        color = Color.White,
-        style = MaterialTheme.typography.labelSmall,
-        modifier = modifier
-            .clip(MaterialTheme.shapes.small)
-            .background(Color.Black.copy(alpha = 0.55f))
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-    )
+    val tilt = analysis.horizonTiltDegrees
+        ?.let { "${it}°" }
+        ?: "—"
+    val horizonHint = HorizonRule.evaluate(analysis)?.message
+
+    Column(modifier = modifier) {
+        Text(
+            text = "debug · $frameCount Frames · Neigung $tilt · " +
+                "${analysis.faces.size} Gesichter · ${analysis.saliencyRegions.size} Saliency",
+            color = Color.White,
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .clip(MaterialTheme.shapes.small)
+                .background(Color.Black.copy(alpha = 0.55f))
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+        )
+        horizonHint?.let {
+            Text(
+                text = it,
+                color = Color.White,
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            )
+        }
+    }
 }
 
 /**
