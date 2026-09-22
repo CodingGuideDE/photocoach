@@ -111,6 +111,32 @@ oben).
 laufenden Betrieb. Build und Unit-Tests sind gruen, aber das Debug-Badge (zeigt jetzt
 Neigung + Gesichter-Anzahl) wurde noch nicht live gesehen — der Emulator hing beim Testen.
 
+**ScoreOverlay (Plan 3.4) steht.** Schmale Leiste am oberen Bildrand, Symbol + Text,
+immer nur *ein* Hinweis. Kein Overlay ueber dem Motiv — der Sucher bleibt frei.
+
+Kette: `FrameAnalysis` → `HintSelector` (waehlt einen Hinweis) → `HintStabilizer`
+(Mindestanzeigezeit) → `ScoreOverlay`.
+
+- `domain/scoring/HintSelector` — Rangfolge nach **Reparierbarkeit**, nicht Auffaelligkeit:
+  Portraet-Rahmung (angeschnittener Kopf ist unwiederbringlich) → Horizont (notfalls durch
+  Drehen/Beschneiden zu retten) → Drittel-Regel (weichste, bewusst verletzbar).
+  Setzt den `ThirdsTargetTracker` zurueck, wenn kein Motiv mehr erkannt wird.
+- `domain/scoring/HintStabilizer` — ein neuer Hinweis (auch "keiner") uebernimmt erst nach
+  1,8 s. Ohne das wechselt der Text bei 10 Hz Analyse bis zu zehnmal pro Sekunde.
+- Beide in `domain/`, nicht in der UI: es sind Entscheidungen darueber *was* gezeigt wird,
+  und so ohne Compose testbar.
+
+Das ist der erste Teil dessen, was der Plan `CompositionScorer` nennt. Der 0-100-Score
+fehlt weiterhin — dafuer muessten die Regeln melden, *wie stark* sie verletzt sind, und sie
+liefern bisher nur "Hinweis oder nicht".
+
+Das `AnalysisDebugBadge` zeigt jetzt nur noch Rohdaten (Frames, Neigung, Gesichter,
+Saliency) — Hinweise gehoeren ins ScoreOverlay. Es faellt weg, sobald der Geraetetest
+(Plan 3.5) bestaetigt hat, dass die Daten stimmen.
+
+Im Emulator verifiziert: Ruhezustand ("Komposition passt", gruen) und Warnzustand
+(Horizont-Hinweis, orange) rendern korrekt, kein Crash.
+
 **Build/Run (Android):**
 - `./gradlew :androidApp:assembleDebug` — Debug-APK bauen
 - Im Android Studio Projekt oeffnen (nutzt dessen gebuendeltes JBR) oder lokal:

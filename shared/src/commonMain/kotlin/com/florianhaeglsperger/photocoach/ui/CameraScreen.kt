@@ -28,20 +28,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
+import com.florianhaeglsperger.photocoach.domain.rules.Hint
 import com.florianhaeglsperger.photocoach.domain.rules.HorizonRule
 import com.florianhaeglsperger.photocoach.domain.rules.PortraitFramingRule
 import com.florianhaeglsperger.photocoach.domain.rules.Rule
 import com.florianhaeglsperger.photocoach.domain.rules.RuleOfThirdsRule
 import com.florianhaeglsperger.photocoach.domain.rules.ThirdsTargetTracker
+import com.florianhaeglsperger.photocoach.domain.scoring.HintSelector
+import com.florianhaeglsperger.photocoach.domain.scoring.HintStabilizer
 import com.florianhaeglsperger.photocoach.domain.subject.DefaultSubjectResolver
 import kotlinx.coroutines.delay
-
-/**
- * Alle bisher implementierten Regeln aus Plan 3.2, in der Reihenfolge, in der ihre Hinweise
- * im Debug-Badge erscheinen. Wird eine neue Regel fertig, reicht ein Eintrag hier — kein
- * Copy-Paste-Block pro Regel noetig (siehe [AnalysisDebugBadge]).
- */
-private val DEBUG_RULES: List<Rule> = listOf(HorizonRule, PortraitFramingRule)
 
 /** Wie lange die Rueckmeldung nach dem Ausloesen stehen bleibt. */
 private const val FEEDBACK_DURATION_MS = 2500L
@@ -59,15 +55,13 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     var capturing by remember { mutableStateOf(false) }
     var feedback: CaptureResult? by remember { mutableStateOf(null) }
     var analysis: FrameAnalysis? by remember { mutableStateOf(null) }
-    var frameCount by remember { mutableStateOf(0) }
+    var hint: Hint? by remember { mutableStateOf(null) }
 
-    // Die Drittel-Regel braucht als einzige einen Zustand ueber Frames hinweg: der
-    // Zielpunkt soll nicht bei jedem Zittern des Motivs umspringen (siehe
-    // [ThirdsTargetTracker]). Deshalb laeuft sie nicht ueber DEBUG_RULES mit, sondern wird
-    // hier beim Eintreffen eines Frames einmal ausgewertet — nicht in der Composition,
-    // die sonst bei jedem Neuzeichnen den Tracker weiterdrehen wuerde.
-    val thirdsTracker = remember { ThirdsTargetTracker() }
-    var thirdsHint: String? by remember { mutableStateOf(null) }
+    // Beide halten Zustand ueber Frames hinweg (Hysterese bzw. Mindestanzeigezeit) und
+    // gehoeren deshalb an den Screen, nicht in den Callback.
+    val hintSelector = remember { HintSelector() }
+    val hintStabilizer = remember { HintStabilizer() }
+    var frameCount by remember { mutableStateOf(0) }
 
     // Rueckmeldung nach kurzer Zeit wieder ausblenden, damit sie den Sucher nicht dauerhaft
     // verstellt. Key ist das Ergebnis selbst: zwei Aufnahmen hintereinander starten den
@@ -90,8 +84,8 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             onState = { state = it },
             onAnalysis = {
                 analysis = it
+                hint = hintStabilizer.update(hintSelector.select(it), it.timestampMs)
                 frameCount++
-                thirdsHint = thirdsHintFor(it, thirdsTracker)
             },
         )
 
@@ -155,14 +149,28 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             )
         }
 
+        // Nur waehrend die Kamera laeuft: waehrend Berechtigungsdialog oder Fehler liegt
+        // ohnehin ein Status-Panel darueber, und ein "Komposition passt" auf schwarzem
+        // Grund waere schlicht falsch.
+        if (state is CameraState.Running) {
+            ScoreOverlay(
+                hint = hint,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 48.dp),
+            )
+        }
+
         analysis?.let { current ->
             AnalysisDebugBadge(
                 analysis = current,
                 frameCount = frameCount,
-                thirdsHint = thirdsHint,
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .padding(16.dp),
+                    // Unter das ScoreOverlay geschoben. Das Badge ist weiterhin nuetzlich
+                    // fuer den anstehenden Geraetetest (Plan 3.5) — es faellt weg, sobald
+                    // dort bestaetigt ist, dass die Daten stimmen.
+                    .padding(start = 16.dp, top = 108.dp),
             )
         }
     }
@@ -182,13 +190,11 @@ fun CameraScreen(modifier: Modifier = Modifier) {
 private fun AnalysisDebugBadge(
     analysis: FrameAnalysis,
     frameCount: Int,
-    thirdsHint: String?,
     modifier: Modifier = Modifier,
 ) {
     val tilt = analysis.horizonTiltDegrees
         ?.let { "${it}°" }
         ?: "—"
-    val hints = DEBUG_RULES.mapNotNull { it.evaluate(analysis)?.message } + listOfNotNull(thirdsHint)
 
     Column(modifier = modifier) {
         Text(
@@ -201,18 +207,6 @@ private fun AnalysisDebugBadge(
                 .background(Color.Black.copy(alpha = 0.55f))
                 .padding(horizontal = 10.dp, vertical = 6.dp),
         )
-        hints.forEach { hint ->
-            Text(
-                text = hint,
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier
-                    .padding(top = 4.dp)
-                    .clip(MaterialTheme.shapes.small)
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-            )
-        }
     }
 }
 
@@ -290,20 +284,3 @@ private fun StatusPanel(content: @Composable () -> Unit) {
     }
 }
 
-/**
- * Wertet die Drittel-Regel mit stabilisiertem Zielpunkt aus (Plan 3.2.1, Schritt 5/6).
- *
- * Bewusst eine normale Funktion und kein Composable: sie veraendert den Zustand des
- * [ThirdsTargetTracker] und darf deshalb genau einmal pro Frame laufen, nicht bei jedem
- * Neuzeichnen. Ohne erkennbares Motiv wird der Tracker zurueckgesetzt — sonst haelt er
- * einen Zielpunkt fest, der zur naechsten Szene keinen Bezug mehr hat.
- */
-private fun thirdsHintFor(analysis: FrameAnalysis, tracker: ThirdsTargetTracker): String? {
-    val subject = DefaultSubjectResolver.resolve(analysis)
-    if (subject == null) {
-        tracker.reset()
-        return null
-    }
-    val target = tracker.select(subject.x, subject.y, analysis.aspectRatio)
-    return RuleOfThirdsRule.evaluate(analysis, target)?.message
-}
