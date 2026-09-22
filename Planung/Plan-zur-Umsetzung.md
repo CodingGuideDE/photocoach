@@ -1,15 +1,71 @@
 # Plan zur Umsetzung: App für Bildkomposition & Kamerawinkel
 
-Status: **Review-Entwurf**, Stand 22.08.2026
+Status: **Review-Entwurf**, Stand 22.09.2026
+**Plattform-Fokus: Android. iOS pausiert — siehe Abschnitt 0.**
 Basiert auf [Umsetzbarkeit.md](./Umsetzbarkeit.md) (inkl. Feature-Lücken-Analyse Abschnitt 6)
 und der Tech-Stack-Entscheidung für Compose Multiplatform.
 
 ---
 
+## 0. Entscheidung: iOS pausiert, Android zuerst (22.09.2026)
+
+**Die Entwicklung läuft ab sofort nur auf Android weiter.** Damit ist die offene Frage aus
+Abschnitt 12 beantwortet: Phase 1 wird als **Android-MVP** abgeschlossen, nicht als
+Zwei-Plattform-MVP.
+
+**Anlass.** Ohne physisches iPhone ist die iOS-Hälfte nicht verifizierbar. Der Simulator
+kann die entscheidenden Dinge nicht zeigen (Abschnitt 12), und Code, der sich nicht prüfen
+lässt, sammelt unbemerkt Fehler an. Parallel zwei Plattformen zu bauen, von denen eine
+blind bleibt, kostet doppelt und liefert einfach.
+
+### Was pausiert
+
+- **3.1 (iOS-`FrameAnalyzer`)** — die drei Vision-Requests sind gebaut, bleiben aber
+  unangeschlossen. Keine weitere Arbeit daran.
+- **`AVCaptureSession`, Vorschau und Auslöser auf iOS** — nicht begonnen, bleibt so.
+- **Der iOS-Anteil jeder Definition of Done** — gilt bis auf Weiteres nur für Android.
+- **TestFlight und App-Store-Einreichung** in Phase 8.
+
+### Was ausdrücklich bleibt
+
+- **Die KMP-Struktur und die `expect`/`actual`-Naht.** Sie sind der Grund, warum diese
+  Pause billig ist: Die gesamte Logik in `domain/` und die UI in `commonMain` entstehen
+  weiterhin plattformneutral. Wenn iOS zurückkommt, fehlt dort nur die Sensorik, nicht
+  die App.
+- **Der iOS-Code kompiliert weiter, seine Tests laufen mit.** Das ist bewusst so: Ändert
+  sich etwas in `commonMain` — ein neues Feld in `FrameAnalysis` etwa —, muss das iOS-
+  `actual` nachgezogen werden. Das kostet beim Ändern Minuten. Lässt man es verrotten,
+  wird daraus beim Wiederaufnehmen eine Woche Archäologie.
+- **`./gradlew :shared:allTests` bleibt der Maßstab vor jedem Commit.** Im Alltag reicht
+  `:shared:testDebugUnitTest` (schneller, kein iOS-Compile).
+
+### Was die Pause erleichtert
+
+Die Modell-Entscheidung aus Abschnitt 11 wird dadurch **einfacher**, nicht schwerer: Solange
+nur Android gebaut wird, muss die Android-Saliency zu keiner iOS-Semantik passen. Die
+Abwägung „Attention- gegen Objekt-Saliency, Plattformen laufen auseinander" aus
+[ML-Architektur.md](./ML-Architektur.md) ist damit **vertagt**, nicht gelöst — sie kommt
+zurück, sobald iOS wieder dazukommt, und ist dann an der `FrameAnalysis`-Naht immer noch
+austauschbar.
+
+### Wann iOS zurückkommt
+
+Zwei Bedingungen, beide nötig:
+
+1. Ein physisches iPhone zum Testen ist verfügbar.
+2. Der Android-MVP (Phase 1) ist abgeschlossen und auf echter Hardware bewertet.
+
+Einstiegspunkt ist dann `shared/src/iosMain/README.md` — dort steht, was gebaut ist, was
+fehlt und welche Simulator-Fallen bekannt sind.
+
+---
+
 ## 1. Tech-Stack & Architektur-Überblick
 
-**Sprache/Framework:** Kotlin Multiplatform (KMP) + Compose Multiplatform, Targets: iOS + Android
-(CMP für iOS seit Version 1.8.0 / Mai 2025 stabil & production-ready).
+**Sprache/Framework:** Kotlin Multiplatform (KMP) + Compose Multiplatform.
+Targets: **aktiv nur Android**, iOS-Targets bleiben im Build, werden aber nicht
+weiterentwickelt (Abschnitt 0). Die Zwei-Plattform-Architektur bleibt bestehen — sie
+ist der Grund, warum die Pause reversibel ist.
 
 **Leitprinzip:** UI und Komposition-Logik geteilt, Kamera-/ML-Erfassung pro Plattform nativ.
 Grund: Es gibt keine Cross-Platform-Bibliothek, die Apples Vision-Framework
@@ -68,45 +124,57 @@ zugrunde liegende Plattform — dadurch nur **eine** Implementierung der eigentl
 
 ## 2. Phase 0 — Projekt-Setup (ca. 1 Woche)
 
-- [ ] KMP-Projekt aufsetzen (`shared`, `iosApp`, `androidApp`) via Kotlin Multiplatform Wizard
-- [ ] `FrameAnalyzer`-Interface (expect/actual) mit leeren/dummy `actual`-Implementierungen
+- [x] KMP-Projekt aufsetzen (`shared`, `iosApp`, `androidApp`) via Kotlin Multiplatform Wizard
+- [x] `FrameAnalyzer`-Interface (expect/actual) mit leeren/dummy `actual`-Implementierungen
       auf beiden Plattformen — Ziel: durchgängiger Daten-Fluss von Kamera bis UI steht,
       auch wenn Analyse noch nichts liefert
-- [ ] Kamera-Grundfunktion iOS: AVCaptureSession, Live-Preview in Compose einbetten
-      (`UIKitView`-Interop)
-- [ ] Kamera-Grundfunktion Android: CameraX `Preview` + `ImageAnalysis` Use Cases
-- [ ] Git-Repo (privat), CI-Grundgerüst (GitHub Actions: Build für beide Targets bei jedem Push)
+- [ ] ⏸️ **PAUSIERT (Abschnitt 0)** — Kamera-Grundfunktion iOS: AVCaptureSession,
+      Live-Preview in Compose einbetten (`UIKitView`-Interop). Nicht begonnen.
+- [x] Kamera-Grundfunktion Android: CameraX `Preview` + `ImageAnalysis` Use Cases
+- [~] Git-Repo steht; CI-Grundgerüst noch offen — CI-Grundgerüst (GitHub Actions: Build für beide Targets bei jedem Push)
 - [ ] LiveCapture-Repo (github.com/LiveCompose/LiveCapture) lokal klonen, Architektur als
       Referenz für spätere Phase 4 durchlesen
 
-**Definition of Done:** App startet auf beiden Plattformen, zeigt Kamera-Live-Bild,
-kann ein Foto auslösen und lokal speichern.
+**Definition of Done (Android): ✅ erfüllt.** App startet, zeigt Kamera-Live-Bild, kann
+ein Foto auslösen und in der Galerie speichern.
+*iOS-Anteil pausiert (Abschnitt 0): App startet im Simulator und zeigt die geteilte UI,
+aber kein Kamerabild.*
 
 ---
 
 ## 3. Phase 1 — MVP: Regelbasiertes Kompositions-Feedback (ca. 4-5 Wochen)
 
-### 3.1 iOS-Implementierung von `FrameAnalyzer`
-- [ ] `VNDetectHorizonRequest` pro Frame (throttled auf ca. 5-10 Hz, nicht jeden Frame —
-      Akku-/Performance-Grund)
-- [ ] `VNGenerateAttentionBasedSaliencyImageRequest` → Saliency-Heatmap in normierte
-      Punkte/Bounding-Boxes umwandeln
-- [ ] `VNDetectFaceRectanglesRequest` für Gesichtspositionen
-- [ ] Ergebnisse in `FrameAnalysis`-Datenklasse mappen, an `commonMain` zurückgeben
+### 3.1 iOS-Implementierung von `FrameAnalyzer` — ⏸️ PAUSIERT (Abschnitt 0)
+
+Die drei Vision-Requests sind **gebaut und kompilieren**, aber nicht angeschlossen:
+es gibt keine Frame-Quelle (`AVCaptureVideoDataOutput` fehlt), `analyze()` wird in der
+App nie aufgerufen — nur aus Tests. Inhaltlich unverifiziert, siehe Abschnitt 12.
+Keine weitere Arbeit hier, bis die Bedingungen aus Abschnitt 0 erfüllt sind.
+
+- [~] `VNDetectHorizonRequest` — Request implementiert, Drosselung fehlt (mangels
+      Frame-Quelle nichts zu drosseln)
+- [x] `VNGenerateAttentionBasedSaliencyImageRequest` → Heatmap auf 12×12-Raster,
+      normierte Punkte mit Gewicht (inhaltlich unverifiziert, Abschnitt 12)
+- [x] `VNDetectFaceRectanglesRequest` für Gesichtspositionen (Koordinaten-Umrechnung
+      per Unit-Test abgesichert)
+- [~] Mapping in `FrameAnalysis` steht — erreicht `commonMain` aber nie, weil der
+      Analyzer nicht aufgerufen wird
 
 ### 3.2 Domain-Logik (geteilt, `commonMain`)
-- [ ] `RuleOfThirdsRule`: Abstand der größten Saliency-Region zu den 4 Schnittpunkten
+- [x] `RuleOfThirdsRule`: Abstand der größten Saliency-Region zu den 4 Schnittpunkten
       berechnen, Score + Richtungshinweis ("Motiv 12% zu weit links von der optimalen
       Position")
 - [x] `HorizonRule`: Warnung bei `horizonTiltDegrees` > 2°
-- [ ] `DeadSpaceRule`: Anteil des Bilds ohne Saliency pro Bildhälfte vergleichen,
+- [ ] `DeadSpaceRule` — **blockiert**: braucht Saliency, auf Android noch leer (§11).
+      Anteil des Bilds ohne Saliency pro Bildhälfte vergleichen,
       Warnung bei starker Asymmetrie ohne erkennbaren Grund (z. B. Blickrichtung)
 - [x] `PortraitFramingRule`: bei erkanntem Gesicht — Kopf nicht zu weit oben/unten
       abgeschnitten, ausreichend Blickraum in Blickrichtung (Blickrichtung grob aus
       Gesichts-Bounding-Box-Position relativ zu Bildmitte geschätzt)
-- [ ] `CompositionScorer`: kombiniert alle Regel-Ergebnisse zu einem einzigen
-      0-100-Live-Score + priorisierter Liste an Hinweisen (nur 1 Hinweis gleichzeitig
-      anzeigen, wichtigsten zuerst — sonst Overload)
+- [~] `CompositionScorer`: **Auswahl eines Hinweises fertig** (`domain/scoring/`:
+      `HintSelector` priorisiert nach Reparierbarkeit, `HintStabilizer` dämpft gegen
+      Flackern bei 10 Hz). **Der 0-100-Score fehlt** — dafür müssten die Regeln melden,
+      *wie stark* sie verletzt sind, nicht nur „Hinweis oder nicht". Eigener Schritt.
 
 #### 3.2.1 `RuleOfThirdsRule` — konkrete Umsetzung
 
@@ -283,29 +351,37 @@ wohin die Person schaut) — Letzteres ist der naheliegendste Ausbau direkt nach
 
 ---
 
-### 3.3 Android-Implementierung von `FrameAnalyzer`
-- [ ] CameraX `ImageAnalysis`-Pipeline für Frame-Zugriff
-- [ ] ML Kit Face Detection für `faces`
-- [ ] Horizont: `SensorManager` (Accelerometer + Rotation Vector) statt Bildanalyse —
+### 3.3 Android-Implementierung von `FrameAnalyzer` — **Schwerpunkt**
+
+Seit Abschnitt 0 der einzige aktive Sensorik-Pfad.
+
+- [x] CameraX `ImageAnalysis`-Pipeline für Frame-Zugriff (~10 Hz gedrosselt)
+- [x] ML Kit Face Detection für `faces` (on-device, gebündeltes Modell)
+- [x] Horizont: `SensorManager` (Schwerkraft-Sensor) statt Bildanalyse —
       deckt den Hauptfall (Gerät schief gehalten) ab, deckt NICHT den Fall "Gerät gerade,
       Horizont im Bild schief" ab (siehe Umsetzbarkeit.md, akzeptierte Einschränkung für v1)
-- [ ] Saliency: leichtes offenes TFLite-Modell (z. B. U2Net-lite oder vergleichbar,
+- [ ] **← Engpass Nr. 1.** Saliency: leichtes offenes TFLite-Modell (z. B. U2Net-lite oder vergleichbar,
       < 5 MB, quantisiert) einbinden — **Rechercheaufgabe:** konkretes Modell mit
       passender Lizenz und Mobile-Performance evaluieren, bevor Implementierung startet
-- [ ] Gleiche `FrameAnalysis`-Datenklasse befüllen wie auf iOS
+- [~] `FrameAnalysis` befüllt bis auf `saliencyRegions`
 
 ### 3.4 UI (Compose, geteilt)
-- [ ] `ScoreOverlay`: nicht-invasives Feedback am Bildschirmrand (Text + Icon), kein
-      Overlay über dem eigentlichen Sucherbild
+- [x] `ScoreOverlay`: Leiste am oberen Rand, Symbol + Text, immer nur ein Hinweis,
+      gedämpft gegen Flackern. Kein Overlay über dem Sucherbild.
 - [ ] Grid-Overlay (Drittel-Regel) ein-/ausblendbar
 - [ ] Ton/Haptik-Trigger bei Score-Sprung (dezent, kein Dauer-Feedback)
 
 ### 3.5 Testing
-- [ ] 50-100 eigene Testfotos je Plattform, manuelle Bewertung ob Feedback korrekt/sinnvoll
+- [ ] 50-100 eigene Testfotos **auf Android**, manuelle Bewertung ob Feedback
+      korrekt/sinnvoll (iOS pausiert, Abschnitt 0)
 - [ ] Performance-Test: Frame-Analyse-Latenz auf älterem Testgerät (nicht nur Flaggschiff)
 
-**Definition of Done:** Auf beiden Plattformen lauffähiger MVP mit korrektem,
-nachvollziehbarem Live-Feedback zu Horizont, Drittel-Regel und toter Fläche.
+**Definition of Done (angepasst, Abschnitt 0): Auf Android** lauffähiger MVP mit
+korrektem, nachvollziehbarem Live-Feedback zu Horizont, Drittel-Regel und toter Fläche,
+auf echter Hardware bewertet.
+
+*Ursprünglich „auf beiden Plattformen" — die iOS-Hälfte ist ohne Gerät nicht
+erreichbar (Abschnitt 12) und bewusst verschoben.*
 
 ⚠️ Die iOS-Hälfte dieser DoD ist ohne physisches Gerät nicht überprüfbar — welche Punkte
 das betrifft und warum, steht in **§12 (Nur auf echter Hardware verifizierbar)**.
@@ -405,22 +481,29 @@ Umsetzt Priorität aus Umsetzbarkeit.md Abschnitt 6.5. Bewusst spät, da Backend
 
 ## 10. Phase 8 — Politur & Veröffentlichung (ca. 2-3 Wochen)
 
-- [ ] Onboarding/Erklärung für Erstnutzer (beide Plattformen)
+- [ ] Onboarding/Erklärung für Erstnutzer (Android)
 - [ ] App-Icon, Store-Screenshots, Beschreibungstexte
-- [ ] TestFlight-Beta (iOS) + Play Console interner Test (Android) mit echten Testern
-- [ ] Store-Einreichung beider Plattformen
+- [ ] Play Console interner Test (Android) mit echten Testern
+      *(TestFlight-Beta pausiert, Abschnitt 0)*
+- [ ] Store-Einreichung Play Store *(App Store pausiert, Abschnitt 0)*
 
 ---
 
-## 11. Offene technische Entscheidungen (vor Phase 1 zu klären)
+## 11. Offene technische Entscheidungen
 
-- [ ] Konkretes Open-Source-Saliency-Modell für Android auswählen (Lizenz + Performance
-      prüfen, bevor Zeit investiert wird)
+- [ ] **Engpass Nr. 1 — Saliency auf Android.** Entweder ein Open-Source-Modell
+      (U²-Netp, Apache-2.0, ~4,7 MB — Achtung: nur der allgemeine Checkpoint, nicht
+      `u2net_portrait`, der ist über APDrawing nicht-kommerziell) oder ein klassisches
+      Verfahren ohne Modell (Spectral Residual o. ä., pures Kotlin in `commonMain`).
+      Durch Abschnitt 0 **vereinfacht**: Es muss zu keiner iOS-Semantik mehr passen.
+      Blockiert `DeadSpaceRule` und macht `RuleOfThirdsRule` auf Android schwächer
+      (die fällt ohne Saliency auf reine Gesichtserkennung zurück).
 - [ ] Konkretes NIMA-artiges Ästhetik-Modell für Phase 2 finden/nachbauen
-- [ ] Minimal unterstützte OS-Versionen festlegen (beeinflusst z. B. Verfügbarkeit
-      neuerer Vision-/ML-Kit-APIs)
-- [ ] Datenschutz-Ansatz festlegen: alles on-device (wie SnapFrame wirbt) als
-      Verkaufsargument, oder optionaler Cloud-Sync für Galerie/Duell-Modus?
+- [~] Minimal unterstützte OS-Versionen: Android minSdk 26 / targetSdk 35 / compileSdk 36
+      festgelegt. iOS-Seite offen, aber pausiert (Abschnitt 0).
+- [x] Datenschutz-Ansatz: **alles on-device**, als Verkaufsargument. Umgesetzt — die App
+      fordert ab API 29 nur noch `CAMERA` an; transitiv hereingereichte Berechtigungen
+      (`ACCESS_NETWORK_STATE`, Storage) sind im Manifest gezielt entfernt bzw. begrenzt.
 
 ## 12. Nur auf echter Hardware verifizierbar
 
@@ -464,11 +547,14 @@ Buffer rein, `FrameAnalysis` raus, Koordinaten normiert, mehrfach aufrufbar. Ein
 Pipeline sagt über die inhaltliche Richtigkeit der iOS-Erkennung nichts aus. Das gehört so
 in die CI-Beschreibung, damit später niemand mehr Sicherheit hineinliest, als drinsteckt.
 
-**Offene Entscheidung:** Die Definition of Done von Phase 1 („auf beiden Plattformen
-lauffähiger MVP mit korrektem, nachvollziehbarem Live-Feedback") ist für iOS ohne Gerät
-nicht erreichbar. Entweder ein iPhone beschaffen, oder die iOS-Hälfte dieser DoD bewusst
-auf später verschieben und Phase 1 als Android-MVP abschließen. Das sollte bewusst
-entschieden und hier festgehalten werden, statt später als Überraschung aufzutauchen.
+**Entschieden am 22.09.2026 (Abschnitt 0): die iOS-Hälfte wird verschoben, Phase 1
+schließt als Android-MVP ab.** Die Liste oben bleibt trotzdem stehen — sie ist die
+Aufgabenliste für den Tag, an dem iOS zurückkommt, und jeder Punkt darauf ist ein
+Fehlerrisiko, das bis dahin unentdeckt im Code liegt.
+
+Die Punkte gelten weiterhin: Der iOS-Code ist gebaut und kompiliert, aber nichts davon ist
+inhaltlich belegt. Wer ihn später anfasst, sollte nicht davon ausgehen, dass er
+funktioniert, nur weil er grün durchläuft.
 
 Nicht betroffen und ohne Gerät voll prüfbar: `SubjectResolver` und alle Regeln aus 3.2 —
 die arbeiten auf `FrameAnalysis` und nicht auf Vision, und ihr primärer Motiv-Anker ist
@@ -478,21 +564,28 @@ ohnehin das Gesicht, nicht die Saliency.
 
 ## 13. Zeitschätzung gesamt
 
-| Phase | Umfang | Dauer |
-|---|---|---|
-| 0 — Setup | Grundgerüst beide Plattformen | 1 Woche |
-| 1 — MVP Regelbasiert | Kern-Feedback beide Plattformen | 4-5 Wochen |
-| 2 — Erklärbares Overlay + Score | | 3 Wochen |
-| 3 — Textbasiertes Coaching | | 1-2 Wochen |
-| 4 — Aktive Hinweise (Heuristik) | | 3-4 Wochen |
-| 5 — Story-Coach | | 2-3 Wochen |
-| 6 — Eigenes ML-Modell | optional | offen (Monate) |
-| 7 — Duell-Modus | optional | offen |
-| 8 — Politur & Release | | 2-3 Wochen |
-| **Kern-Pfad (0-3+8, ohne Optionales)** | **echter, differenzierter MVP für beide Plattformen** | **~14-17 Wochen** |
+Angepasst auf Android-only (Abschnitt 0). Die alte Schätzung ging von zwei Plattformen aus;
+eine Plattform weniger spart vor allem in Phase 1, 3.5 und 8.
+
+| Phase | Umfang | Dauer | Stand |
+|---|---|---|---|
+| 0 — Setup | Grundgerüst, Kamera, Aufnahme (Android) | 1 Woche | ✅ fertig |
+| 1 — MVP Regelbasiert | Kern-Feedback Android | 3-4 Wochen | 🚧 ~⅔ |
+| 2 — Erklärbares Overlay + Score | | 2-3 Wochen | ⬜ |
+| 3 — Textbasiertes Coaching | | 1-2 Wochen | ⬜ |
+| 4 — Aktive Hinweise (Heuristik) | | 3-4 Wochen | ⬜ |
+| 5 — Story-Coach | | 2-3 Wochen | ⬜ |
+| 6 — Eigenes ML-Modell | optional | offen (Monate) | ⬜ |
+| 7 — Duell-Modus | optional | offen | ⬜ |
+| 8 — Politur & Release | nur Play Store | 2 Wochen | ⬜ |
+| **Kern-Pfad (0-3+8)** | **differenzierter MVP für Android** | **~11-14 Wochen** | |
+| *iOS nachziehen* | *Kamera, Anbindung, Gerätetest, App Store* | *+3-4 Wochen* | *⏸️ pausiert* |
+
+**Was von Phase 1 noch fehlt:** Saliency auf Android (§11), `DeadSpaceRule`, der
+0-100-Score, Grid-Overlay und Haptik (3.4), Gerätetest (3.5).
 
 **Empfehlung unverändert:** Nach Phase 1 innehalten und ehrlich bewerten, ob sich
-der Aufwand für dich noch lohnt — das ist bereits ein kompletter, vorzeigbarer MVP.
+der Aufwand noch lohnt — das ist bereits ein kompletter, vorzeigbarer MVP.
 Phase 2 (erklärbares Overlay) und Phase 3 (Textbasiertes Coaching) sind die Stellen, an
 denen sich die App von der bestehenden Konkurrenz abhebt — dort lohnt sich
 Sorgfalt am meisten.

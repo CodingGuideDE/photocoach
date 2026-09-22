@@ -2,6 +2,12 @@
 
 Recherche-Stand: 21.08.2026
 
+> **⏸️ Hinweis 22.09.2026:** Die Machbarkeitsaussagen unten gelten für beide Plattformen
+> und bleiben gültig. Gebaut wird aktuell aber **nur Android** — siehe
+> [Plan-zur-Umsetzung.md](./Plan-zur-Umsetzung.md) Abschnitt 0. Wo hier „Apple-Bordmittel"
+> als Erleichterung genannt sind (Abschnitt 2), gilt das entsprechend erst wieder, wenn
+> iOS zurückkommt; auf Android ist die Saliency weiterhin der Engpass.
+
 ## Kurzfazit
 
 **Machbar, und es gibt bereits Beweise dafür in freier Wildbahn.** Der Markt ist aktiver als

@@ -1,6 +1,10 @@
 # Progress.md — Implementierungsstand PhotoCoach
 
-Stand: 27.08.2026. Diese Datei ist die **Kurzübersicht** "was ist fertig, was fehlt" —
+Stand: 22.09.2026. **Plattform-Fokus: Android — iOS pausiert**
+(siehe [Plan-zur-Umsetzung.md](./Plan-zur-Umsetzung.md) Abschnitt 0).
+Alle Angaben unten beziehen sich auf Android, sofern nicht anders vermerkt.
+
+Diese Datei ist die **Kurzübersicht** "was ist fertig, was fehlt" —
 Begründungen, Detail-Entscheidungen und technische Stolpersteine stehen weiterhin in
 `CLAUDE.md` (Root) und in den anderen `Planung/*.md`-Dateien. Phasen-Nummerierung und
 Definition-of-Done je Phase: siehe [Plan-zur-Umsetzung.md](./Plan-zur-Umsetzung.md).
@@ -15,9 +19,9 @@ zumüllen, das gehört in CLAUDE.md.
 
 | Phase | Status | Kurznotiz |
 |---|---|---|
-| 0 — Projekt-Setup | ✅ Fertig | KMP-Grundgerüst, Kamera-Vorschau, Foto-Aufnahme, Datenfluss zur UI (Android) |
-| 1 — MVP: Regelbasiertes Feedback | 🚧 In Arbeit | Sensorik teils echt (Android), Domain-Regeln noch nicht implementiert |
-| 2 — Erklärbares Overlay + Score | ⬜ Nicht begonnen | |
+| 0 — Projekt-Setup | ✅ Fertig (Android) | KMP-Grundgerüst, Kamera-Vorschau, Foto-Aufnahme, Datenfluss zur UI |
+| 1 — MVP: Regelbasiertes Feedback | 🚧 ~⅔ | 3 von 4 Regeln fertig, ScoreOverlay live. Engpass: Saliency |
+| 2 — Erklärbares Overlay + Score | ⬜ Nicht begonnen | Braucht Saliency |
 | 3 — Textbasiertes Coaching | ⬜ Nicht begonnen | Konzept in CLAUDE.md/Umsetzbarkeit.md 6.1 festgehalten |
 | 4 — Aktive Richtungsvorschläge | ⬜ Nicht begonnen | |
 | 5 — Story-/Sequenz-Coach | ⬜ Nicht begonnen | |
@@ -33,42 +37,53 @@ zumüllen, das gehört in CLAUDE.md.
 - [x] `FrameAnalyzer`/`CameraFrame` als expect/actual-Naht angelegt
 - [x] Kamera-Vorschau Android (CameraX `Preview`), verifiziert im Emulator
 - [x] Foto-Aufnahme Android (`ImageCapture`, Speicherung in MediaStore-Galerie), verifiziert
-- [x] iOS-Targets aktiv, App läuft im Simulator (Kamera-Berechtigung geprüft; echte
-      Preview/Aufnahme erst mit echtem iPhone möglich, Simulator hat keine Kamera)
-- [x] Datenfluss Kamera → `FrameAnalyzer` → UI steht (Android), inkl. Debug-Badge
+- [x] Datenfluss Kamera → `FrameAnalyzer` → UI steht, inkl. Debug-Badge
+- [~] iOS-Targets aktiv, App läuft im Simulator und zeigt die geteilte UI — **kein
+      Kamerabild**. ⏸️ pausiert, Abschnitt 0.
 
-**Definition of Done erfüllt** (Android vollständig, iOS eingeschränkt auf "läuft im Simulator").
+**Definition of Done für Android erfüllt.** Der iOS-Anteil ist bewusst verschoben.
 
 ---
 
-## Phase 1 — MVP: Regelbasiertes Kompositions-Feedback 🚧
+## Phase 1 — MVP: Regelbasiertes Kompositions-Feedback 🚧 (~⅔)
 
-### Was steht
-- [x] Android: ML Kit Face Detection — **echt**, on-device, FAST-Modus
-- [x] Android: Horizont-Neigung — **echt**, aus Schwerkraftsensor (`HorizonSensor.kt`)
-- [x] Android: `ImageAnalysis`-Pipeline, gedrosselt auf ~10 Hz
-- [x] `FrameAnalyzer.close()` zur Ressourcenfreigabe (ML-Kit-Detektor)
-- [x] `RuleOfThirdsRule` bis ins Detail durchgeplant (Motivbestimmung, Geometrie,
-      Score-Kennlinie, Hysterese, Hinweistext) — siehe Plan-zur-Umsetzung.md §3.2.1
+### Sensorik (Android) — `FrameAnalysis`
+- [x] `ImageAnalysis`-Pipeline, `KEEP_ONLY_LATEST`, eigener Thread, ~10 Hz
+- [x] `faces` — **echt**, ML Kit on-device, gebündeltes Modell, FAST-Modus
+- [x] `horizonTiltDegrees` — **echt**, Schwerkraftsensor (`HorizonSensor.kt`),
+      gegen Display-Rotation normalisiert, Winkelmathematik unit-getestet
+- [x] `aspectRatio` — befüllt aus `uprightWidth/uprightHeight`
+- [ ] **`saliencyRegions` — leer. Engpass Nr. 1**, hängt an Plan §11
 
-### Was fehlt
-- [ ] **`domain/rules/`, `domain/scoring/`, `domain/coaching/`, `domain/subject/`,
-      `domain/geometry/` existieren im Code noch nicht** — der Plan aus §3.2.1 ist
-      geschrieben, aber noch nicht umgesetzt. Das ist aktuell der größte Rückstand.
-- [ ] `aspectRatio`-Feld fehlt noch in `FrameAnalysis` (Voraussetzung für Schritt 1 der
-      Rule-of-Thirds-Umsetzung)
-- [ ] `saliencyRegions` auf Android leer — hängt an offener Modellentscheidung
-      (Plan §11: welches TFLite-Saliency-Modell)
-- [ ] iOS `FrameAnalyzer` komplett Dummy — Vision-Framework-Requests
-      (`VNDetectHorizonRequest`, `VNGenerateAttentionBasedSaliencyImageRequest`,
-      `VNDetectFaceRectanglesRequest`) noch nicht implementiert; braucht echtes iPhone
-      zum Testen (keine Kamera im Simulator)
-- [ ] `HorizonRule`, `DeadSpaceRule`, `PortraitFramingRule`, `CompositionScorer` — nicht
-      begonnen
-- [ ] UI: `ScoreOverlay`, ein-/ausblendbares Grid-Overlay, dezenter Ton/Haptik-Trigger —
-      aktuell nur provisorisches `AnalysisDebugBadge` (Frame-Zähler + Zeitstempel)
-- [ ] Testing mit 50-100 eigenen Testfotos je Plattform — nicht begonnen
-- [ ] Performance-Test auf älterem Testgerät — nicht begonnen
+### Domain-Logik (`commonMain`, plattformneutral)
+- [x] `domain/geometry/Thirds` — Drittel-Linien und -Schnittpunkte, seitenverhältnis-korrigiert
+- [x] `domain/subject/SubjectResolver` — Motivpunkt aus Gesicht (bevorzugt) oder Saliency
+- [x] `domain/rules/HorizonRule`
+- [x] `domain/rules/PortraitFramingRule`
+- [x] `domain/rules/RuleOfThirdsRule` + `ThirdsTargetTracker` (Hysterese gegen Zielspringen)
+- [x] `domain/scoring/HintSelector` — wählt **einen** Hinweis, priorisiert nach
+      Reparierbarkeit (Rahmung → Horizont → Drittel)
+- [x] `domain/scoring/HintStabilizer` — 1,8 s Mindestanzeigezeit gegen Flackern bei 10 Hz
+- [ ] `domain/rules/DeadSpaceRule` — **blockiert durch Saliency**
+- [ ] 0-100-Score des `CompositionScorer` — braucht Schweregrad statt „Hinweis ja/nein"
+
+### UI (`commonMain`)
+- [x] `ScoreOverlay` — Leiste oben, Symbol + Text, ein Hinweis, im Emulator verifiziert
+      (Ruhe- und Warnzustand)
+- [ ] Grid-Overlay (Drittel-Regel), ein-/ausblendbar
+- [ ] Dezenter Ton-/Haptik-Trigger
+- [~] `AnalysisDebugBadge` zeigt nur noch Rohdaten — fällt nach dem Gerätetest weg
+
+### Testing
+- [x] 154 Unit-Tests, grün auf Android **und** im iOS-Simulator
+- [ ] **50-100 eigene Testfotos auf echtem Android-Gerät** — nicht begonnen, wichtigster
+      offener Schritt für die Phase-1-DoD
+- [ ] Latenz- und Wärmemessung auf schwachem Gerät
+
+### iOS ⏸️
+- [~] `FrameAnalyzer.ios.kt` — alle drei Vision-Requests gebaut, **nicht angeschlossen**
+      (keine `AVCaptureVideoDataOutput`, `analyze()` läuft nur in Tests) und inhaltlich
+      unverifiziert (Plan §12). Keine weitere Arbeit, Abschnitt 0.
 
 ### Bekannte Bugs / Lücken
 - Foto-Rotation: `imageCapture.targetRotation` wird nur beim Binden gesetzt — dreht der
@@ -76,9 +91,14 @@ zumüllen, das gehört in CLAUDE.md.
   (braucht `OrientationEventListener`)
 - Horizont-Erkennung deckt nur "Gerät schief gehalten" ab, nicht "Gerät gerade, Horizont
   im Bild schief" (akzeptierte v1-Einschränkung)
-- Gesichtserkennung + Neigungswert sind noch nicht live auf Gerät/Emulator verifiziert
-  (Build und Unit-Tests grün, aber visuell noch nicht gesehen — Emulator hing beim letzten
-  Testversuch)
+- Ohne Saliency fällt `RuleOfThirdsRule` auf reine Gesichtserkennung zurück — bei Motiven
+  ohne Gesicht (Landschaft, Architektur) liefert sie auf Android gar nichts
+
+### Nächste sinnvolle Schritte
+1. Saliency auf Android entscheiden und bauen (§11) — schaltet `DeadSpaceRule` frei und
+   macht `RuleOfThirdsRule` erst allgemein einsetzbar
+2. Gerätetest auf echtem Android-Gerät (3.5)
+3. Grid-Overlay (klein, sichtbarer Nutzen)
 
 ---
 

@@ -9,6 +9,25 @@ Diese Datei nach jeder abgeschlossenen Aufgabe aktualisieren — neuer Stand unt
 festhalten. Neu entdeckte Bugs/Lücken gehören ebenfalls sofort hier rein (siehe bestehende
 "Bekannte Luecke"-Einträge als Vorbild), auch wenn sie noch nicht behoben sind.
 
+## Plattform-Fokus: Android (iOS pausiert, 22.09.2026)
+
+**Neue Funktionalität wird nur auf Android gebaut.** Begründung und Bedingungen für das
+Wiederaufnehmen: `Planung/Plan-zur-Umsetzung.md` Abschnitt 0.
+
+Was das fuer die Arbeit hier heisst:
+
+- **Keine neuen iOS-Features.** `AVCaptureSession`, Preview und Aufnahme auf iOS bleiben
+  liegen. `FrameAnalyzer.ios.kt` ist gebaut, aber nicht angeschlossen und inhaltlich
+  unverifiziert — nicht darauf aufbauen.
+- **Der iOS-Code muss weiter kompilieren.** Aendert sich etwas in `commonMain` (neues Feld
+  in `FrameAnalysis`, neue Methode im `expect`), das iOS-`actual` mitziehen. Das kostet
+  jetzt Minuten und spaeter Tage.
+- **Die `expect`/`actual`-Naht und `commonMain` bleiben plattformneutral.** Sie sind der
+  Grund, warum die Pause billig ist — Logik und UI gehoeren weiterhin dorthin, nicht nach
+  `androidMain`.
+- **Vor dem Commit `./gradlew :shared:allTests`** (schliesst die iOS-Simulator-Tests ein).
+  Im Alltag reicht `:shared:testDebugUnitTest`, das spart den iOS-Compile.
+
 ## Repository status
 
 Phase 0 (Projekt-Setup) ist angelegt: KMP-Gerueststruktur (`shared/`, `androidApp/`),

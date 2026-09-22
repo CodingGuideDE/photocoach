@@ -1,10 +1,28 @@
 # ML-Systeme & Architektur
 
-Recherche-Stand: 23.08.2026
+Recherche-Stand: 23.08.2026 · **Plattform-Hinweis ergänzt 22.09.2026**
 Ergänzt [Umsetzbarkeit.md](./Umsetzbarkeit.md) und [Plan-zur-Umsetzung.md](./Plan-zur-Umsetzung.md).
 Grundlage: alles läuft on-device (Begründung siehe Abschnitt 8).
 
 ---
+
+> **⏸️ iOS ist pausiert (Plan-zur-Umsetzung.md Abschnitt 0, 22.09.2026).**
+>
+> Dieses Dokument argumentiert durchgehend über beide Plattformen. Das bleibt inhaltlich
+> richtig und ist die Zielarchitektur — aber für die aktuelle Arbeit gilt:
+>
+> - **Alles, was iOS/Vision/CoreML betrifft, ist vertagt.** Das betrifft vor allem die
+>   Abwägung „plattformeigen gegen eigenes Modell auf beiden" und die Divergenz-Messung
+>   aus 6.1 — die setzt zwei laufende Plattformen voraus und ist derzeit nicht durchführbar.
+> - **Das macht die Modellwahl einfacher, nicht schwerer.** Die Android-Saliency muss zu
+>   keiner iOS-Semantik passen. Was zählt, ist allein: läuft es schnell genug auf dem
+>   schwächsten Zielgerät, ist die Lizenz sauber, und liefert es brauchbare Motivpunkte.
+> - **Die Divergenzfrage ist vertagt, nicht gelöst.** Sie kommt zurück, sobald iOS wieder
+>   dazukommt. Weil `FrameAnalysis` die Naht ist, bleibt sie bis dahin austauschbar —
+>   deshalb ist es vertretbar, sie jetzt nicht zu beantworten.
+> - **Der geteilte Backbone aus Teil C** bleibt die Zielarchitektur, ist aber kein Thema
+>   mehr für die nächsten Schritte. Für Android allein reicht ein einzelnes Saliency-Modell
+>   (S1) oder ein klassisches Verfahren.
 
 ## 1. Kurzfassung der Recherche
 
