@@ -64,17 +64,18 @@ actual class FrameAnalyzer actual constructor() {
         val mediaImage = frame.image.image
         val rotation = frame.image.imageInfo.rotationDegrees
 
+        // Nach dem Drehen um `rotation` steht das Bild aufrecht — bei 90/270 Grad sind
+        // Breite und Hoehe dabei vertauscht. ML Kit liefert Koordinaten in genau diesem
+        // aufrechten System, also muss hier dasselbe gelten. Aus denselben Werten kommt
+        // auch das Seitenverhaeltnis: es beschreibt das Bild so, wie die normierten
+        // Koordinaten es meinen.
+        val upright = rotation == 90 || rotation == 270
+        val uprightWidth = if (upright) frame.image.height else frame.image.width
+        val uprightHeight = if (upright) frame.image.width else frame.image.height
+
         val faces = if (mediaImage == null) {
             emptyList()
         } else {
-            // Nach dem Drehen um `rotation` steht das Bild aufrecht — bei 90/270 Grad sind
-            // Breite und Hoehe dabei vertauscht. ML Kit liefert Koordinaten in genau diesem
-            // aufrechten System, also muss hier dasselbe gelten.
-            val uprightWidth =
-                if (rotation == 90 || rotation == 270) frame.image.height else frame.image.width
-            val uprightHeight =
-                if (rotation == 90 || rotation == 270) frame.image.width else frame.image.height
-
             detectFaces(InputImage.fromMediaImage(mediaImage, rotation))
                 .map { it.toFaceRect(uprightWidth, uprightHeight) }
         }
@@ -85,6 +86,7 @@ actual class FrameAnalyzer actual constructor() {
             faces = faces,
             // imageInfo.timestamp ist in Nanosekunden seit Boot.
             timestampMs = frame.image.imageInfo.timestamp / 1_000_000L,
+            aspectRatio = uprightWidth.toFloat() / uprightHeight.toFloat(),
         )
     }
 

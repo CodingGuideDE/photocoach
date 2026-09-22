@@ -22,6 +22,16 @@ data class FrameAnalysis(
     val saliencyRegions: List<SaliencyPoint>,
     val faces: List<FaceRect>,
     val timestampMs: Long,
+    /**
+     * Breite geteilt durch Hoehe des *aufrecht gedrehten* Analyse-Frames (16/9 ≈ 1.78 quer,
+     * 9/16 ≈ 0.56 hoch).
+     *
+     * Noetig, weil alle Koordinaten in dieser Klasse auf 0..1 normiert sind: dort ist ein
+     * Versatz von 0.1 in x eine andere physische Strecke als 0.1 in y. Wer Abstaende
+     * rechnet, muss das herausrechnen — sonst bewertet z.B. die Drittel-Regel im Hochformat
+     * vertikale Abweichungen systematisch zu milde (siehe `distanceInWidths`).
+     */
+    val aspectRatio: Float,
 )
 
 /** Normalisierter Punkt (0.0–1.0) im Kamerabild mit Aufmerksamkeits-Gewicht. */

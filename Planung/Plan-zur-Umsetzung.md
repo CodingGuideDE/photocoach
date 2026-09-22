@@ -101,7 +101,7 @@ kann ein Foto auslösen und lokal speichern.
 - [x] `HorizonRule`: Warnung bei `horizonTiltDegrees` > 2°
 - [ ] `DeadSpaceRule`: Anteil des Bilds ohne Saliency pro Bildhälfte vergleichen,
       Warnung bei starker Asymmetrie ohne erkennbaren Grund (z. B. Blickrichtung)
-- [ ] `PortraitFramingRule`: bei erkanntem Gesicht — Kopf nicht zu weit oben/unten
+- [x] `PortraitFramingRule`: bei erkanntem Gesicht — Kopf nicht zu weit oben/unten
       abgeschnitten, ausreichend Blickraum in Blickrichtung (Blickrichtung grob aus
       Gesichts-Bounding-Box-Position relativ zu Bildmitte geschätzt)
 - [ ] `CompositionScorer`: kombiniert alle Regel-Ergebnisse zu einem einzigen
@@ -129,7 +129,7 @@ besser, sobald Saliency dazukommt — ohne dass die Regel selbst sich ändert.
 
 **Schritt 1 — `FrameAnalysis` um das Seitenverhältnis ergänzen**
 
-- [ ] `aspectRatio: Float` (Breite/Höhe des aufrecht gedrehten Analyse-Frames) in
+- [x] `aspectRatio: Float` (Breite/Höhe des aufrecht gedrehten Analyse-Frames) in
       `FrameAnalysis` aufnehmen, auf Android aus `uprightWidth/uprightHeight` befüllen
 
 Grund: In normierten 0–1-Koordinaten ist ein Versatz von 0,1 in x eine andere physische
@@ -152,12 +152,12 @@ fun interface SubjectResolver {
 }
 ```
 
-- [ ] `DefaultSubjectResolver` implementieren, Reihenfolge:
+- [x] `DefaultSubjectResolver` implementieren, Reihenfolge:
       1. **Gesicht vorhanden** → Mittelpunkt des flächengrößten `FaceRect`, `confidence = 1.0`
       2. **Sonst Saliency** → stärksten `SaliencyPoint` nehmen, dann den gewichteten
          Schwerpunkt aller Punkte im Umkreis von 0,15 um ihn herum bilden
       3. **Sonst** `null`
-- [ ] Bewusst **kein** Schwerpunkt über alle Saliency-Punkte: bei zwei Motiven links und
+- [x] Bewusst **kein** Schwerpunkt über alle Saliency-Punkte: bei zwei Motiven links und
       rechts läge der Schwerpunkt genau in der Mitte — die Regel würde ein Motiv melden,
       das es gar nicht gibt. Der Umkreis-Filter verhindert das.
 
@@ -167,8 +167,8 @@ auf **eine** definierte Bedeutung gebracht wird: „geschätzter Mittelpunkt des
 
 **Schritt 3 — Geometrie (`domain/geometry/Thirds.kt`)**
 
-- [ ] Die vier Schnittpunkte als Konstanten: (⅓,⅓), (⅔,⅓), (⅓,⅔), (⅔,⅔)
-- [ ] Seitenverhältnis-korrigierte Distanz, gerechnet in Einheiten der **Bildbreite**:
+- [x] Die vier Schnittpunkte als Konstanten: (⅓,⅓), (⅔,⅓), (⅓,⅔), (⅔,⅔)
+- [x] Seitenverhältnis-korrigierte Distanz, gerechnet in Einheiten der **Bildbreite**:
 
 ```kotlin
 fun distance(ax: Float, ay: Float, bx: Float, by: Float, aspectRatio: Float): Float {
@@ -187,21 +187,21 @@ sealed interface RuleResult {
 }
 ```
 
-- [ ] `NotApplicable` ≠ Score 0 — ohne erkanntes Motiv hat die Regel *keine* Meinung.
+- [x] `NotApplicable` ≠ Score 0 — ohne erkanntes Motiv hat die Regel *keine* Meinung.
       Ein 0-Score würde den Gesamtscore fälschlich nach unten ziehen und den Nutzer
       für etwas rügen, das die App schlicht nicht sehen kann.
-- [ ] Score-Kennlinie: Distanz 0 → 1.0; ab 0,04 beginnt der Abfall; bei 0,167
+- [x] Score-Kennlinie: Distanz 0 → 1.0; ab 0,04 beginnt der Abfall; bei 0,167
       (= Abstand Bildmitte ↔ Drittel-Linie) → 0.0. Dazwischen `smoothstep` statt linear,
       damit kleine Wackler nahe am Optimum den Score nicht sichtbar zappeln lassen.
-- [ ] Die Mitte ist **kein** Fehler: Ein mittig platziertes Motiv landet bei Score ≈ 0,
+- [x] Die Mitte ist **kein** Fehler: Ein mittig platziertes Motiv landet bei Score ≈ 0,
       aber die Regel bekommt im `CompositionScorer` nur mittleres Gewicht — Symmetrie ist
       eine legitime Bildsprache, keine Regelverletzung.
-- [ ] `RuleDetail` trägt Motivpunkt, gewählten Zielpunkt und den Versatz mit — Phase 2
+- [x] `RuleDetail` trägt Motivpunkt, gewählten Zielpunkt und den Versatz mit — Phase 2
       (erklärbares Overlay) und Phase 4 (Richtungspfeil) zeichnen genau daraus.
 
 **Schritt 5 — Zielpunkt stabilisieren**
 
-- [ ] Nächstgelegenen der vier Punkte wählen — aber **mit Hysterese**: der bisher gewählte
+- [x] Nächstgelegenen der vier Punkte wählen — aber **mit Hysterese**: der bisher gewählte
       Zielpunkt bleibt gültig, solange kein anderer mindestens 15 % näher liegt
 
 Ohne das kippt die Wahl bei einem Motiv nahe der Bildmitte zwischen zwei fast gleich weit
@@ -211,9 +211,9 @@ sondern in einen `ThirdsTargetTracker`, den die aufrufende Schicht über Frames 
 
 **Schritt 6 — Hinweistext (`domain/coaching/`)**
 
-- [ ] Formulierung **beschreibend**, nicht anweisend: „Motiv sitzt 12 % links vom
+- [x] Formulierung **beschreibend**, nicht anweisend: „Motiv sitzt 12 % links vom
       Drittelpunkt" — Versatz in Prozent der Bildbreite, gerundet
-- [ ] Unter 5 % Versatz keinen Hinweis ausgeben (das ist innerhalb der Messungenauigkeit
+- [x] Unter 5 % Versatz keinen Hinweis ausgeben (das ist innerhalb der Messungenauigkeit
       der Motivbestimmung)
 
 ⚠️ **Falle für Phase 4:** Handlungsanweisungen sind *umgekehrt* zum Versatz. Sitzt das Motiv
@@ -224,16 +224,42 @@ sauber durchdacht und getestet werden.
 
 **Testfälle (`commonTest`, Bausteine liegen in `TestFrames.kt` bereit)**
 
-- [ ] Motiv exakt auf (⅓,⅓) → Score 1,0
-- [ ] Motiv exakt in der Bildmitte → Score ≈ 0, kein Absturz, `Evaluated` (nicht `NotApplicable`)
-- [ ] Kein Gesicht, keine Saliency → `NotApplicable`
-- [ ] Gesicht **und** Saliency vorhanden, an verschiedenen Stellen → Gesicht gewinnt
-- [ ] Zwei Saliency-Punkte links und rechts → Motivpunkt landet auf einem der beiden,
+- [x] Motiv exakt auf (⅓,⅓) → Score 1,0
+- [x] Motiv exakt in der Bildmitte → Score ≈ 0, kein Absturz, `Evaluated` (nicht `NotApplicable`)
+- [x] Kein Gesicht, keine Saliency → `NotApplicable`
+- [x] Gesicht **und** Saliency vorhanden, an verschiedenen Stellen → Gesicht gewinnt
+- [x] Zwei Saliency-Punkte links und rechts → Motivpunkt landet auf einem der beiden,
       **nicht** in der Mitte
-- [ ] Gleicher normierter Versatz in Hoch- und Querformat → unterschiedlicher Score
+- [x] Gleicher normierter Versatz in Hoch- und Querformat → unterschiedlicher Score
       (belegt, dass `aspectRatio` wirkt)
-- [ ] Motiv wandert langsam über die Bildmitte → Zielpunkt wechselt **einmal**, nicht mehrfach
-- [ ] Versatz 3 % → kein Hinweistext; Versatz 12 % → Text nennt „12 %"
+- [x] Motiv wandert langsam über die Bildmitte → Zielpunkt wechselt **einmal**, nicht mehrfach
+- [x] Versatz 3 % → kein Hinweistext; Versatz 12 % → Text nennt „12 %"
+
+**Umgesetzt am 27.08.2026** — 32 Tests in `commonTest`, alle gruen
+(`./gradlew :shared:allTests`). Drei bewusste Abweichungen von der obigen Skizze:
+
+1. **Kein `RuleResult`.** Die Codebasis hatte bereits einen `Rule`-Contract
+   (`evaluate(FrameAnalysis): Hint?`, siehe `Rule.kt`), dem `HorizonRule` und
+   `PortraitFramingRule` folgen. `RuleOfThirdsRule` folgt ihm ebenfalls, statt einen
+   zweiten Ergebnistyp einzufuehren. Score und Versatz — die ein `Hint` nicht tragen kann —
+   liefert stattdessen `RuleOfThirdsRule.analyse()` als `ThirdsEvaluation`, fertig fuer
+   `CompositionScorer` (Score) und die Overlays aus Phase 2/4 (Motivpunkt, Zielpunkt).
+2. **Der Hinweis ist anweisend, nicht beschreibend.** `PortraitFramingRule` formuliert
+   bereits als Kamera-Aktion und hat die Umkehrung sauber dokumentiert; zwei verschiedene
+   Sprachformen nebeneinander waeren fuer den Nutzer schlechter als die Abweichung von
+   diesem Plan. Die Umkehrung ist umgesetzt und mit eigenem Test abgesichert — die Warnung
+   fuer Phase 4 bleibt trotzdem stehen, sie gilt dort fuer den Pfeil-Indikator.
+3. **Kein Abdeckungs-Tor.** Fuer "ist der Saliency-Bereich konzentriert genug" reicht der
+   Cluster-Anteil allein: bei gleichmaessiger Verteilung haelt der Klumpen um das Maximum
+   nur einen Bruchteil des Gewichts und faellt schon dadurch durch. Ein zweites Tor ueber
+   den Anteil belegter Rasterzellen haette zusaetzlich die Rastergroesse (12x12) in
+   `commonMain` festgeschrieben — und die gilt nur fuer iOS, nicht fuer Androids kuenftiges
+   Modell. Ein Test deckt den Fall "weisse Wand" ab.
+
+Offen geblieben: Der Hinweis wurde noch **nicht live ausgeloest gesehen**. Auf Android
+fehlt Saliency (§11) und die Emulator-Szene enthaelt kein Gesicht; auf iOS braeuchte es
+Hardware (§12). Die Regel selbst ist ueber Unit-Tests abgedeckt, die Verdrahtung im
+`CameraScreen` nur daraufhin, dass sie laeuft und bei fehlendem Motiv korrekt schweigt.
 
 **Reihenfolge & Aufwand**
 
@@ -280,6 +306,9 @@ wohin die Person schaut) — Letzteres ist der naheliegendste Ausbau direkt nach
 
 **Definition of Done:** Auf beiden Plattformen lauffähiger MVP mit korrektem,
 nachvollziehbarem Live-Feedback zu Horizont, Drittel-Regel und toter Fläche.
+
+⚠️ Die iOS-Hälfte dieser DoD ist ohne physisches Gerät nicht überprüfbar — welche Punkte
+das betrifft und warum, steht in **§12 (Nur auf echter Hardware verifizierbar)**.
 
 ---
 
@@ -393,7 +422,61 @@ Umsetzt Priorität aus Umsetzbarkeit.md Abschnitt 6.5. Bewusst spät, da Backend
 - [ ] Datenschutz-Ansatz festlegen: alles on-device (wie SnapFrame wirbt) als
       Verkaufsargument, oder optionaler Cloud-Sync für Galerie/Duell-Modus?
 
-## 12. Zeitschätzung gesamt
+## 12. Nur auf echter Hardware verifizierbar
+
+Anlass: Am 27.08.2026 nachgemessen — **Visions Saliency-Modelle werten im iOS-Simulator
+den Bildinhalt nicht aus.** Einfarbige Fläche, helles Rechteck und Streifenmuster mit
+maximalem Kontrast liefern dieselbe Heatmap (68×68, max=0.36, identische Verteilung),
+attention- wie objectness-basiert, über beide Eingabewege und unabhängig vom
+IOSurface-Backing. Die Requests melden dabei Erfolg. Details im Kommentar in
+`shared/src/iosTest/.../FrameAnalyzerTest.kt`.
+
+Daraus folgt eine Liste von Dingen, die **kein grüner Testlauf jemals belegen kann**,
+solange kein physisches Gerät im Spiel ist. Sie steht hier zusammen, weil sie sonst als
+verstreute Code-Kommentare unsichtbar bleibt.
+
+- [ ] **Saliency wertet den Bildinhalt aus.** Prüfung: dasselbe Motiv einmal links, einmal
+      rechts im Bild — der Saliency-Schwerpunkt muss mitwandern. Bis dahin ist jede Aussage
+      über die inhaltliche Richtigkeit von `readHeatmap` unbelegt.
+- [ ] **Gesichtserkennung wertet den Bildinhalt aus (iOS).** Noch offen, weil der
+      vorhandene Test nur den Negativfall prüft (`einfarbiges Bild → 0 Gesichter`) — den
+      würde auch ein Detektor bestehen, der immer eine leere Liste liefert. Erster Schritt
+      ist eine Gegenprobe im Simulator mit einem echten Foto als Test-Ressource
+      („Foto → ≥1 Gesicht"); nur falls die scheitert, braucht es dafür ein Gerät.
+      Solange das offen ist, ist unklar, ob im Simulator nur die Saliency betroffen ist.
+- [ ] **Vorzeichen-Konvention des Horizonts auf iOS.** In `FrameAnalysis.kt` als
+      „positiv = rechte Seite tiefer" festgelegt und aus der Rotationsrichtung von
+      `VNHorizonObservation.angle` hergeleitet, aber nie an einem Gerät nachgesehen. Prüfung:
+      Gerät kippen und den Wert beobachten, danach dieselbe Szene gegen Android gegenprüfen.
+      Ein Vorzeichenfehler korrigiert den Nutzer exakt falsch herum.
+- [ ] **Die drei Motiv-Schwellwerte kalibrieren** (`SALIENCY_THRESHOLD`,
+      `MAX_SALIENT_COVERAGE`, `MIN_CLUSTER_SHARE` — siehe 3.2.1). Braucht 30–50 eigene
+      Frames mit eigenem Urteil „hier ist ein Motiv / hier nicht". Setzt Punkt 1 voraus:
+      ohne inhaltlich arbeitende Saliency gibt es nichts zu kalibrieren.
+- [ ] **Latenz und Wärmeentwicklung der Vision-Requests** bei ~10 Hz über mehrere Minuten.
+      Im Simulator bedeutungslos, weil dort weder die Neural Engine noch das reale
+      Energiebudget beteiligt sind.
+
+**Was CI davon abdecken kann: nichts davon.** CI läuft im Simulator. Abgedeckt sind dort
+die Regel-Logik in `commonTest`, die reinen Funktionen (`visionBoxToFaceRect` und, sobald
+herausgezogen, die Rasterlogik aus `readHeatmap`) sowie „die Verarbeitungskette hält" —
+Buffer rein, `FrameAnalysis` raus, Koordinaten normiert, mehrfach aufrufbar. Eine grüne
+Pipeline sagt über die inhaltliche Richtigkeit der iOS-Erkennung nichts aus. Das gehört so
+in die CI-Beschreibung, damit später niemand mehr Sicherheit hineinliest, als drinsteckt.
+
+**Offene Entscheidung:** Die Definition of Done von Phase 1 („auf beiden Plattformen
+lauffähiger MVP mit korrektem, nachvollziehbarem Live-Feedback") ist für iOS ohne Gerät
+nicht erreichbar. Entweder ein iPhone beschaffen, oder die iOS-Hälfte dieser DoD bewusst
+auf später verschieben und Phase 1 als Android-MVP abschließen. Das sollte bewusst
+entschieden und hier festgehalten werden, statt später als Überraschung aufzutauchen.
+
+Nicht betroffen und ohne Gerät voll prüfbar: `SubjectResolver` und alle Regeln aus 3.2 —
+die arbeiten auf `FrameAnalysis` und nicht auf Vision, und ihr primärer Motiv-Anker ist
+ohnehin das Gesicht, nicht die Saliency.
+
+---
+
+## 13. Zeitschätzung gesamt
 
 | Phase | Umfang | Dauer |
 |---|---|---|

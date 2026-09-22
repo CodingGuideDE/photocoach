@@ -81,17 +81,19 @@ dreier echter Bugs, die dabei auftraten und wie sie behoben wurden (Compose Mult
   zu beschreiben (`frame(...)`, `faceAt(...)`, `subjectAt(...)`, Konstanten `THIRD_LEFT` etc.).
   **Regeln in `domain/rules/` gehoeren hierueber getestet, nicht am Emulator** — sie sind pure
   Funktionen von `FrameAnalysis` auf einen Hinweis.
-- `shared/src/commonTest/.../domain/rules/HorizonRuleTest.kt` — erste Regel aus Plan 3.2
-  (`domain/rules/HorizonRule.kt` + `Rule.kt` fuer den Contract). 7/7 gruen auf Android und
-  iOS-Simulator. Haengt provisorisch als zweite Zeile im `AnalysisDebugBadge`
-  (`CameraScreen.kt`), bis dort das echte ScoreOverlay (Plan 3.4) haengt.
+- `shared/src/commonTest/.../domain/rules/HorizonRuleTest.kt` und `PortraitFramingRuleTest.kt`
+  — erste zwei Regeln aus Plan 3.2 (`domain/rules/Rule.kt` fuer den gemeinsamen Contract).
+  Beide gruen auf Android und iOS-Simulator (7/7 bzw. 9/9). `DEBUG_RULES` in
+  `CameraScreen.kt` sammelt alle zutreffenden Hinweise fuers `AnalysisDebugBadge` ein — neue
+  Regel = ein Eintrag dort, kein Copy-Paste-UI-Code — bis dort das echte ScoreOverlay
+  (Plan 3.4) haengt.
 - `shared/src/androidUnitTest/.../capture/HorizonSensorTest.kt` — Winkel-Mathematik der
   Horizont-Erkennung. Achtung bei Aenderungen: `Display.getRotation()` meldet die Drehung der
   Grafik, nicht des Geraets, beides ist gegenlaeufig. Die Konvention steht als Kommentar im
   Test — sie war beim Schreiben schon einmal vertauscht.
-- **Bekannt rot (Stand 2026-08-27, nicht Teil der HorizonRule-Aenderung):**
-  `FrameAnalyzerTest."Saliency verschiebt sich..."` und `"...reagiert ueberhaupt auf den
-  Bildinhalt"` auf `iosSimulatorArm64` — noch nicht untersucht.
+- Die vormals bekannt roten `FrameAnalyzerTest`-Faelle zur Saliency-Position auf
+  `iosSimulatorArm64` sind behoben (durch Entfernen der im Simulator nicht verifizierbaren
+  Positions-Assertions, siehe Kommentar dort und `iosMain/README.md`) — alle Tests gruen.
 
 **Stand `FrameAnalysis`:** `faces` (Android: ML Kit, iOS: Vision) und `horizonTiltDegrees`
 (Android: Schwerkraft-Sensor, iOS: `VNDetectHorizonRequest`) sind auf beiden Plattformen

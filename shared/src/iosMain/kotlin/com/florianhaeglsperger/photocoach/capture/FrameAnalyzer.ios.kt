@@ -28,6 +28,7 @@ import platform.Vision.VNHorizonObservation
 import platform.Vision.VNImageRequestHandler
 import platform.Vision.VNSaliencyImageObservation
 import kotlin.math.PI
+import kotlin.math.roundToInt
 
 /**
  * iOS-Frame: haelt den rohen [CVPixelBufferRef] plus den Zeitstempel des Frames.
@@ -82,11 +83,23 @@ actual class FrameAnalyzer actual constructor() {
             )
         }
 
+        // Vision normiert alle Koordinaten auf den Pixel-Buffer, also stammt auch das
+        // Seitenverhaeltnis von dort — anders als auf Android ist hier nichts zu drehen,
+        // der Buffer liegt bereits so, wie die Koordinaten ihn meinen.
+        val aspectRatio = CVPixelBufferGetWidth(frame.pixelBuffer).toFloat() /
+            CVPixelBufferGetHeight(frame.pixelBuffer).toFloat()
+
         if (!succeeded) {
             // Ein einzelnes fehlgeschlagenes Frame darf die Pipeline nicht abreissen —
             // bei ~10 Hz faellt es nicht auf. Zeitstempel trotzdem durchreichen, damit
             // oben sichtbar bleibt, dass Frames ankommen.
-            return FrameAnalysis(null, emptyList(), emptyList(), frame.timestampMs)
+            return FrameAnalysis(
+                horizonTiltDegrees = null,
+                saliencyRegions = emptyList(),
+                faces = emptyList(),
+                timestampMs = frame.timestampMs,
+                aspectRatio = aspectRatio,
+            )
         }
 
         return FrameAnalysis(
@@ -94,6 +107,7 @@ actual class FrameAnalyzer actual constructor() {
             saliencyRegions = saliencyRequest.readSaliencyPoints(),
             faces = faceRequest.readFaces(),
             timestampMs = frame.timestampMs,
+            aspectRatio = aspectRatio,
         )
     }
 
@@ -108,7 +122,7 @@ actual class FrameAnalyzer actual constructor() {
      */
     private fun VNDetectHorizonRequest.readTiltDegrees(): Float? {
         val observation = results()?.firstOrNull() as? VNHorizonObservation ?: return null
-        return (observation.angle * 180.0 / PI).toFloat()
+        return horizonAngleToDegrees(observation.angle)
     }
 
     /**
@@ -238,3 +252,22 @@ private fun readHeatmap(buffer: CVPixelBufferRef): List<SaliencyPoint> {
 
 /** `kCVPixelBufferLock_ReadOnly` — als Konstante, weil der Name nicht ueberall exportiert wird. */
 private const val READ_ONLY = 1uL
+
+/**
+ * Rechnet den Rollwinkel aus `VNHorizonObservation.angle` (Bogenmass) in Grad um.
+ *
+ * Bewusst als pure Funktion herausgezogen — wie [visionBoxToFaceRect] und `tiltFromGravity`
+ * auf Android: Umrechnungsfaktor und Vorzeichen sind der einzige Teil, der falsch sein
+ * kann, und so laesst er sich ohne Vision und ohne Geraet pruefen.
+ *
+ * Rundet auf eine Nachkommastelle, damit die Werte zur Android-Seite passen
+ * (`HorizonSensor.tiltFromGravity` tut dasselbe). Die geteilten Regeln in `domain/` sehen
+ * Werte von beiden Plattformen — sie sollten sich nicht darin unterscheiden, wie fein
+ * aufgeloest sie ankommen.
+ *
+ * Vorzeichen folgt derselben Konvention wie Android: positiv = rechte Seite tiefer.
+ */
+internal fun horizonAngleToDegrees(radians: Double): Float {
+    val degrees = (radians * 180.0 / PI).toFloat()
+    return (degrees * 10f).roundToInt() / 10f
+}

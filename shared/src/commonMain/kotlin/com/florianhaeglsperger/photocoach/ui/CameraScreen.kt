@@ -29,7 +29,19 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 import com.florianhaeglsperger.photocoach.domain.rules.HorizonRule
+import com.florianhaeglsperger.photocoach.domain.rules.PortraitFramingRule
+import com.florianhaeglsperger.photocoach.domain.rules.Rule
+import com.florianhaeglsperger.photocoach.domain.rules.RuleOfThirdsRule
+import com.florianhaeglsperger.photocoach.domain.rules.ThirdsTargetTracker
+import com.florianhaeglsperger.photocoach.domain.subject.DefaultSubjectResolver
 import kotlinx.coroutines.delay
+
+/**
+ * Alle bisher implementierten Regeln aus Plan 3.2, in der Reihenfolge, in der ihre Hinweise
+ * im Debug-Badge erscheinen. Wird eine neue Regel fertig, reicht ein Eintrag hier — kein
+ * Copy-Paste-Block pro Regel noetig (siehe [AnalysisDebugBadge]).
+ */
+private val DEBUG_RULES: List<Rule> = listOf(HorizonRule, PortraitFramingRule)
 
 /** Wie lange die Rueckmeldung nach dem Ausloesen stehen bleibt. */
 private const val FEEDBACK_DURATION_MS = 2500L
@@ -48,6 +60,14 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     var feedback: CaptureResult? by remember { mutableStateOf(null) }
     var analysis: FrameAnalysis? by remember { mutableStateOf(null) }
     var frameCount by remember { mutableStateOf(0) }
+
+    // Die Drittel-Regel braucht als einzige einen Zustand ueber Frames hinweg: der
+    // Zielpunkt soll nicht bei jedem Zittern des Motivs umspringen (siehe
+    // [ThirdsTargetTracker]). Deshalb laeuft sie nicht ueber DEBUG_RULES mit, sondern wird
+    // hier beim Eintreffen eines Frames einmal ausgewertet — nicht in der Composition,
+    // die sonst bei jedem Neuzeichnen den Tracker weiterdrehen wuerde.
+    val thirdsTracker = remember { ThirdsTargetTracker() }
+    var thirdsHint: String? by remember { mutableStateOf(null) }
 
     // Rueckmeldung nach kurzer Zeit wieder ausblenden, damit sie den Sucher nicht dauerhaft
     // verstellt. Key ist das Ergebnis selbst: zwei Aufnahmen hintereinander starten den
@@ -71,6 +91,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             onAnalysis = {
                 analysis = it
                 frameCount++
+                thirdsHint = thirdsHintFor(it, thirdsTracker)
             },
         )
 
@@ -138,6 +159,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             AnalysisDebugBadge(
                 analysis = current,
                 frameCount = frameCount,
+                thirdsHint = thirdsHint,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(16.dp),
@@ -151,19 +173,22 @@ fun CameraScreen(modifier: Modifier = Modifier) {
  *
  * Bewusst haesslich und offensichtlich temporaer: sie faellt weg, sobald hier in Phase 1/2
  * das echte ScoreOverlay haengt (Plan 3.4). Solange dort noch nichts haengt, ist die
- * Hinweiszeile hier auch der einzige Weg, `HorizonRule` (und spaeter die anderen Regeln aus
- * Plan 3.2) live zu sehen statt nur per Unit-Test.
+ * Hinweiszeile hier auch der einzige Weg, die Regeln aus Plan 3.2 live zu sehen statt nur
+ * per Unit-Test. Zeigt bewusst *alle* zutreffenden Regel-Hinweise gleichzeitig (nicht nur
+ * einen priorisierten) — das Zusammenfassen zu einem einzigen Hinweis ist Aufgabe des noch
+ * nicht implementierten `CompositionScorer`.
  */
 @Composable
 private fun AnalysisDebugBadge(
     analysis: FrameAnalysis,
     frameCount: Int,
+    thirdsHint: String?,
     modifier: Modifier = Modifier,
 ) {
     val tilt = analysis.horizonTiltDegrees
         ?.let { "${it}°" }
         ?: "—"
-    val horizonHint = HorizonRule.evaluate(analysis)?.message
+    val hints = DEBUG_RULES.mapNotNull { it.evaluate(analysis)?.message } + listOfNotNull(thirdsHint)
 
     Column(modifier = modifier) {
         Text(
@@ -176,9 +201,9 @@ private fun AnalysisDebugBadge(
                 .background(Color.Black.copy(alpha = 0.55f))
                 .padding(horizontal = 10.dp, vertical = 6.dp),
         )
-        horizonHint?.let {
+        hints.forEach { hint ->
             Text(
-                text = it,
+                text = hint,
                 color = Color.White,
                 style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier
@@ -263,4 +288,22 @@ private fun StatusPanel(content: @Composable () -> Unit) {
     ) {
         content()
     }
+}
+
+/**
+ * Wertet die Drittel-Regel mit stabilisiertem Zielpunkt aus (Plan 3.2.1, Schritt 5/6).
+ *
+ * Bewusst eine normale Funktion und kein Composable: sie veraendert den Zustand des
+ * [ThirdsTargetTracker] und darf deshalb genau einmal pro Frame laufen, nicht bei jedem
+ * Neuzeichnen. Ohne erkennbares Motiv wird der Tracker zurueckgesetzt — sonst haelt er
+ * einen Zielpunkt fest, der zur naechsten Szene keinen Bezug mehr hat.
+ */
+private fun thirdsHintFor(analysis: FrameAnalysis, tracker: ThirdsTargetTracker): String? {
+    val subject = DefaultSubjectResolver.resolve(analysis)
+    if (subject == null) {
+        tracker.reset()
+        return null
+    }
+    val target = tracker.select(subject.x, subject.y, analysis.aspectRatio)
+    return RuleOfThirdsRule.evaluate(analysis, target)?.message
 }

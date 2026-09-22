@@ -40,12 +40,20 @@ fun frame(
     saliency: List<SaliencyPoint> = emptyList(),
     faces: List<FaceRect> = emptyList(),
     timestampMs: Long = 0L,
+    aspectRatio: Float = LANDSCAPE_16_9,
 ): FrameAnalysis = FrameAnalysis(
     horizonTiltDegrees = tiltDegrees,
     saliencyRegions = saliency,
     faces = faces,
     timestampMs = timestampMs,
+    aspectRatio = aspectRatio,
 )
+
+/** Quer, 16:9 — die Vorgabe, solange ein Test nichts anderes braucht. */
+const val LANDSCAPE_16_9 = 16f / 9f
+
+/** Hoch, 9:16 — fuer Tests, in denen das Seitenverhaeltnis den Unterschied macht. */
+const val PORTRAIT_9_16 = 9f / 16f
 
 /** Ein Aufmerksamkeits-Schwerpunkt an einer bestimmten Stelle. */
 fun subjectAt(x: Float, y: Float, weight: Float = 1f): SaliencyPoint =
