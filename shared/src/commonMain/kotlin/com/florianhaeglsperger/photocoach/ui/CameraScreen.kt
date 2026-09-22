@@ -1,5 +1,6 @@
 package com.florianhaeglsperger.photocoach.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,9 +25,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.florianhaeglsperger.photocoach.diagnostics.FieldLog
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 import com.florianhaeglsperger.photocoach.domain.rules.Hint
 import com.florianhaeglsperger.photocoach.domain.rules.HorizonRule
@@ -61,6 +64,9 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     // gehoeren deshalb an den Screen, nicht in den Callback.
     val hintSelector = remember { HintSelector() }
     val hintStabilizer = remember { HintStabilizer() }
+    // Beim Feldtest (Plan 3.5) standardmaessig an: ohne sichtbare Drittel-Linien laesst
+    // sich nicht beurteilen, ob ein Hinweis stimmt.
+    var showGrid by remember { mutableStateOf(true) }
     var frameCount by remember { mutableStateOf(0) }
 
     // Rueckmeldung nach kurzer Zeit wieder ausblenden, damit sie den Sucher nicht dauerhaft
@@ -84,7 +90,13 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             onState = { state = it },
             onAnalysis = {
                 analysis = it
-                hint = hintStabilizer.update(hintSelector.select(it), it.timestampMs)
+                val next = hintStabilizer.update(hintSelector.select(it), it.timestampMs)
+                // Nur bei Aenderung protokollieren, nicht bei jedem Frame — sonst steht
+                // in der Datei zehnmal pro Sekunde dasselbe.
+                if (next != hint) {
+                    FieldLog.append(next?.message ?: "— kein Hinweis —")
+                }
+                hint = next
                 frameCount++
             },
         )
@@ -132,6 +144,9 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                     .padding(bottom = 48.dp),
                 onClick = {
                     capturing = true
+                    // Markiert im Protokoll den Moment der Aufnahme — darueber lassen sich
+                    // Fotos und Hinweise hinterher zusammenbringen.
+                    FieldLog.append(">>> FOTO — angezeigt war: ${hint?.message ?: "kein Hinweis"}")
                     current.takePhoto { result ->
                         capturing = false
                         feedback = result
@@ -152,7 +167,20 @@ fun CameraScreen(modifier: Modifier = Modifier) {
         // Nur waehrend die Kamera laeuft: waehrend Berechtigungsdialog oder Fehler liegt
         // ohnehin ein Status-Panel darueber, und ein "Komposition passt" auf schwarzem
         // Grund waere schlicht falsch.
+        // Unter allen Bedienelementen, ueber dem Kamerabild.
+        if (state is CameraState.Running && showGrid) {
+            ThirdsGrid(modifier = Modifier.fillMaxSize())
+        }
+
         if (state is CameraState.Running) {
+            GridToggle(
+                enabled = showGrid,
+                onClick = { showGrid = !showGrid },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 108.dp, end = 16.dp),
+            )
+
             ScoreOverlay(
                 hint = hint,
                 modifier = Modifier
@@ -284,3 +312,43 @@ private fun StatusPanel(content: @Composable () -> Unit) {
     }
 }
 
+
+/**
+ * Schaltet das Drittel-Raster ein und aus (Plan 3.4: "ein-/ausblendbar").
+ *
+ * Bewusst klein und am Rand: Es ist eine Einstellung, kein Hauptbedienelement — der
+ * Ausloeser bleibt das einzige grosse Ziel im Sucher.
+ */
+@Composable
+private fun GridToggle(
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .clip(MaterialTheme.shapes.small)
+            .background(Color.Black.copy(alpha = if (enabled) 0.65f else 0.4f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(20.dp)) {
+            val color = Color.White.copy(alpha = if (enabled) 0.95f else 0.45f)
+            listOf(1f / 3f, 2f / 3f).forEach { fraction ->
+                drawLine(
+                    color = color,
+                    start = Offset(size.width * fraction, 0f),
+                    end = Offset(size.width * fraction, size.height),
+                    strokeWidth = 1.5f,
+                )
+                drawLine(
+                    color = color,
+                    start = Offset(0f, size.height * fraction),
+                    end = Offset(size.width, size.height * fraction),
+                    strokeWidth = 1.5f,
+                )
+            }
+        }
+    }
+}

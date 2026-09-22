@@ -7,6 +7,7 @@ import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.MediaStore
+import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -33,6 +34,7 @@ import androidx.core.content.ContextCompat
 import com.florianhaeglsperger.photocoach.capture.CameraFrame
 import com.florianhaeglsperger.photocoach.capture.FrameAnalyzer
 import com.florianhaeglsperger.photocoach.capture.HorizonSensor
+import com.florianhaeglsperger.photocoach.diagnostics.FieldLog
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 import java.text.SimpleDateFormat
 import java.util.concurrent.Executors
@@ -128,6 +130,43 @@ actual fun CameraPreview(
     // Der Horizont kommt auf Android aus dem Schwerkraft-Sensor, nicht aus dem Bild
     // (siehe HorizonSensor fuer die Einschraenkung, die das mit sich bringt).
     val horizonSensor = remember(context) { HorizonSensor(context) }
+
+    /**
+     * Haelt Foto-Ausrichtung und Horizont-Bezug aktuell, waehrend die App laeuft.
+     *
+     * **Zwei verschiedene Rotationen, bewusst getrennt behandelt:**
+     *
+     * - `imageCapture.targetRotation` richtet sich nach der *physischen* Lage des Geraets.
+     *   Ein quer gehaltenes Geraet soll ein Querformat-Foto liefern, auch wenn die
+     *   Bildschirmdrehung gesperrt ist. Deshalb der von [OrientationEventListener]
+     *   abgeleitete Wert.
+     * - `horizonSensor.displayRotation` richtet sich nach der *Bildschirm*-Drehung. Der
+     *   Nutzer beurteilt "gerade" an dem, was er sieht. Bei gesperrter Drehung waere die
+     *   physische Lage hier die falsche Bezugsgroesse — deshalb wird sie direkt vom
+     *   Display gelesen und nicht aus dem Listener abgeleitet.
+     *
+     * Die beiden zu verwechseln faellt im Hochformat nicht auf und erst im Querformat.
+     */
+    val orientationListener = remember(context, previewView) {
+        object : OrientationEventListener(context) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                imageCapture.targetRotation = orientation.toSurfaceRotation()
+                horizonSensor.displayRotation =
+                    previewView.display?.rotation ?: Surface.ROTATION_0
+            }
+        }
+    }
+
+    DisposableEffect(orientationListener) {
+        if (orientationListener.canDetectOrientation()) orientationListener.enable()
+        onDispose { orientationListener.disable() }
+    }
+
+    DisposableEffect(context) {
+        FieldLog.attach(context)
+        onDispose { }
+    }
 
     DisposableEffect(horizonSensor) {
         horizonSensor.start()
@@ -227,10 +266,11 @@ actual fun CameraPreview(
                     // falsch herum liegen. Nur beim Binden gesetzt — dreht der Nutzer das
                     // Geraet waehrend die App laeuft, muesste ein OrientationEventListener
                     // nachziehen (offen, siehe CLAUDE.md).
+                    // Startwerte. Ab hier haelt der OrientationEventListener oben beide
+                    // aktuell — ohne ihn wuerde ein Drehen waehrend des Betriebs nicht
+                    // ankommen (Foto landet falsch herum, Neigung falsch bezogen).
                     val displayRotation = previewView.display?.rotation ?: Surface.ROTATION_0
                     imageCapture.targetRotation = displayRotation
-                    // Ohne das meldet ein bewusst quer gehaltenes Geraet konstant 90 Grad
-                    // Neigung, obwohl es fuer den Nutzer gerade ist.
                     horizonSensor.displayRotation = displayRotation
 
                     // unbindAll() vor dem Binden: sonst wirft CameraX beim erneuten
@@ -348,4 +388,19 @@ private tailrec fun Context.findComponentActivity(): ComponentActivity? = when (
     is ComponentActivity -> this
     is ContextWrapper -> baseContext.findComponentActivity()
     else -> null
+}
+
+/**
+ * Rechnet den Winkel des [OrientationEventListener] (0-359 Grad, im Uhrzeigersinn ab der
+ * natuerlichen Lage) in eine `Surface.ROTATION_*`-Konstante um.
+ *
+ * Die Zuordnung ist gegenlaeufig, weil `Surface.ROTATION_*` die Drehung der *Grafik*
+ * beschreibt und nicht die des Geraets — dieselbe Stolperfalle wie in `HorizonSensorTest`.
+ * Entspricht dem dokumentierten CameraX-Muster.
+ */
+internal fun Int.toSurfaceRotation(): Int = when (this) {
+    in 45 until 135 -> Surface.ROTATION_270
+    in 135 until 225 -> Surface.ROTATION_180
+    in 225 until 315 -> Surface.ROTATION_90
+    else -> Surface.ROTATION_0
 }

@@ -156,6 +156,23 @@ Saliency) — Hinweise gehoeren ins ScoreOverlay. Es faellt weg, sobald der Gera
 Im Emulator verifiziert: Ruhezustand ("Komposition passt", gruen) und Warnzustand
 (Horizont-Hinweis, orange) rendern korrekt, kein Crash.
 
+**Feldtest-Ruestzeug (Plan 3.5), temporaer.**
+- `ui/ThirdsGrid` — Drittel-Raster mit hervorgehobenen Schnittpunkten, ueber
+  `GridToggle` (oben rechts) ein-/ausblendbar, standardmaessig AN. Ohne sichtbare Linien
+  laesst sich nicht beurteilen, ob ein Hinweis stimmt.
+- `diagnostics/FieldLog` — schreibt jede Hinweis-Aenderung und jede Aufnahme mit Uhrzeit
+  nach `/sdcard/Android/data/com.florianhaeglsperger.photocoach/files/feldtest.log`.
+  Abholen: `adb pull <Pfad>`. Datei statt Logcat, weil das Geraet beim Test nicht am
+  Rechner haengt. **Faellt weg, sobald der Feldtest ausgewertet ist.**
+
+**Rotation.** `OrientationEventListener` in `CameraPreview.android.kt` haelt jetzt beides
+aktuell — mit einer Unterscheidung, die leicht untergeht:
+- `imageCapture.targetRotation` folgt der **physischen** Geraetelage (Querformat-Foto auch
+  bei gesperrter Bildschirmdrehung) — abgeleitet ueber `toSurfaceRotation()`, unit-getestet.
+- `horizonSensor.displayRotation` folgt der **Bildschirm**-Drehung, direkt vom Display
+  gelesen. Der Nutzer beurteilt "gerade" an dem, was er sieht.
+Die beiden zu verwechseln faellt im Hochformat nicht auf, im Querformat sofort.
+
 **Build/Run (Android):**
 - `./gradlew :androidApp:assembleDebug` — Debug-APK bauen
 - Im Android Studio Projekt oeffnen (nutzt dessen gebuendeltes JBR) oder lokal:
