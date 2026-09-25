@@ -5,6 +5,7 @@ import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageProxy
 import com.florianhaeglsperger.photocoach.domain.model.FaceRect
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
+import com.florianhaeglsperger.photocoach.domain.model.mirroredHorizontally
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
@@ -28,6 +29,14 @@ import java.util.concurrent.TimeUnit
 actual class CameraFrame(
     internal val image: ImageProxy,
     internal val tiltDegrees: Float?,
+    /**
+     * `true`, wenn die Vorschau gespiegelt dargestellt wird (Frontkamera).
+     *
+     * Die Analyse-Frames kommen roh vom Sensor und sind **nicht** gespiegelt. Damit die
+     * Koordinaten in [FrameAnalysis] zu dem passen, was der Nutzer sieht, wird in
+     * `analyze()` nachgespiegelt.
+     */
+    internal val mirrored: Boolean = false,
 )
 
 /**
@@ -78,6 +87,9 @@ actual class FrameAnalyzer actual constructor() {
         } else {
             detectFaces(InputImage.fromMediaImage(mediaImage, rotation))
                 .map { it.toFaceRect(uprightWidth, uprightHeight) }
+                // Frontkamera: Vorschau ist gespiegelt, der Analyse-Frame nicht.
+                // Ohne das zeigt jeder Hinweis beim Selfie in die falsche Richtung.
+                .map { if (frame.mirrored) it.mirroredHorizontally() else it }
         }
 
         return FrameAnalysis(

@@ -42,13 +42,31 @@ sealed interface CameraState {
      * [takePhoto] loest aus und speichert das Ergebnis auf dem Geraet; das Ergebnis kommt
      * asynchron ueber den uebergebenen Callback zurueck (Speichern dauert je nach Geraet
      * einige hundert Millisekunden).
+     *
+     * [canSwitchLens] ist `false`, wenn das Geraet nur eine Kamera hat — dann wird der
+     * Umschalter gar nicht erst angezeigt, statt einen Knopf ohne Wirkung anzubieten.
      */
     data class Running(
         val takePhoto: (onResult: (CaptureResult) -> Unit) -> Unit,
+        val lensFacing: LensFacing,
+        val canSwitchLens: Boolean,
+        val switchLens: () -> Unit,
     ) : CameraState
 
     /** Kamera konnte nicht gestartet werden (kein Geraet, belegt, Treiberfehler, ...). */
     data class Error(val message: String) : CameraState
+}
+
+/** Welche der beiden Kameras gerade aktiv ist. */
+enum class LensFacing {
+    /** Rueckkamera — der Normalfall fuer diese App. */
+    BACK,
+
+    /** Frontkamera. Das Vorschaubild ist dabei gespiegelt, siehe `FaceRect.mirroredHorizontally`. */
+    FRONT,
+    ;
+
+    fun opposite(): LensFacing = if (this == BACK) FRONT else BACK
 }
 
 /**

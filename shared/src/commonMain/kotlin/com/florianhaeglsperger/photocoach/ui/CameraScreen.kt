@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.florianhaeglsperger.photocoach.diagnostics.FieldLog
@@ -137,22 +138,47 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             }
 
             // Laeuft — freie Sicht auf das Motiv, nur der Ausloeser am unteren Rand.
-            is CameraState.Running -> ShutterButton(
-                enabled = !capturing,
+            is CameraState.Running -> Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
                     .padding(bottom = 48.dp),
-                onClick = {
-                    capturing = true
-                    // Markiert im Protokoll den Moment der Aufnahme — darueber lassen sich
-                    // Fotos und Hinweise hinterher zusammenbringen.
-                    FieldLog.append(">>> FOTO — angezeigt war: ${hint?.message ?: "kein Hinweis"}")
-                    current.takePhoto { result ->
-                        capturing = false
-                        feedback = result
-                    }
-                },
-            )
+            ) {
+                // Ausloeser bleibt mittig — er ist das Hauptziel und soll dort liegen, wo
+                // der Daumen ihn blind findet. Der Objektiv-Wechsel haengt daneben, ohne
+                // die Mitte zu verschieben.
+                ShutterButton(
+                    enabled = !capturing,
+                    modifier = Modifier.align(Alignment.Center),
+                    onClick = {
+                        capturing = true
+                        // Markiert im Protokoll den Moment der Aufnahme — darueber lassen
+                        // sich Fotos und Hinweise hinterher zusammenbringen.
+                        FieldLog.append(
+                            ">>> FOTO (${current.lensFacing}) — angezeigt war: " +
+                                (hint?.message ?: "kein Hinweis"),
+                        )
+                        current.takePhoto { result ->
+                            capturing = false
+                            feedback = result
+                        }
+                    },
+                )
+
+                if (current.canSwitchLens) {
+                    LensToggle(
+                        lensFacing = current.lensFacing,
+                        enabled = !capturing,
+                        onClick = {
+                            FieldLog.append("Objektiv gewechselt zu ${current.lensFacing.opposite()}")
+                            current.switchLens()
+                        },
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 32.dp),
+                    )
+                }
+            }
         }
 
         feedback?.let { result ->
@@ -348,6 +374,62 @@ private fun GridToggle(
                     end = Offset(size.width, size.height * fraction),
                     strokeWidth = 1.5f,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Wechselt zwischen Rueck- und Frontkamera (rechts neben dem Ausloeser).
+ *
+ * Waehrend einer laufenden Aufnahme gesperrt: CameraX muss beim Wechsel neu binden, und
+ * das mitten im Auslesen anzustossen ist ein unnoetiges Risiko.
+ *
+ * Symbol von Hand gezeichnet (keine Icon-Abhaengigkeit, wie beim [GridToggle]): zwei Pfeile
+ * im Kreis. Der ausgefuellte Punkt zeigt, welche Seite gerade aktiv ist.
+ */
+@Composable
+private fun LensToggle(
+    lensFacing: LensFacing,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val alpha = if (enabled) 0.85f else 0.35f
+    Box(
+        modifier = modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.45f))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(24.dp)) {
+            val color = Color.White.copy(alpha = alpha)
+            val stroke = size.width * 0.09f
+            val radius = size.width * 0.34f
+            val center = Offset(size.width / 2f, size.height / 2f)
+
+            // Kreis mit Luecke oben — angedeutete Drehrichtung.
+            drawArc(
+                color = color,
+                startAngle = -60f,
+                sweepAngle = 300f,
+                useCenter = false,
+                topLeft = Offset(center.x - radius, center.y - radius),
+                size = androidx.compose.ui.geometry.Size(radius * 2, radius * 2),
+                style = Stroke(width = stroke),
+            )
+            // Pfeilspitze am oberen Ende des Bogens
+            val tip = Offset(center.x + radius * 0.5f, center.y - radius * 0.86f)
+            drawLine(color, tip, Offset(tip.x - stroke * 1.6f, tip.y - stroke * 0.6f), stroke)
+            drawLine(color, tip, Offset(tip.x + stroke * 0.2f, tip.y + stroke * 1.7f), stroke)
+
+            // Punkt in der Mitte: gefuellt = Frontkamera aktiv, offen = Rueckkamera.
+            if (lensFacing == LensFacing.FRONT) {
+                drawCircle(color, radius = size.width * 0.13f, center = center)
+            } else {
+                drawCircle(color, radius = size.width * 0.13f, center = center, style = Stroke(stroke * 0.8f))
             }
         }
     }

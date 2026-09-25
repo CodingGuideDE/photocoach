@@ -173,6 +173,27 @@ aktuell — mit einer Unterscheidung, die leicht untergeht:
   gelesen. Der Nutzer beurteilt "gerade" an dem, was er sieht.
 Die beiden zu verwechseln faellt im Hochformat nicht auf, im Querformat sofort.
 
+**Objektiv-Umschalter.** `LensToggle` rechts neben dem Ausloeser, nur sichtbar wenn das
+Geraet beide Kameras hat. `CameraState.Running` traegt `lensFacing`, `canSwitchLens` und
+`switchLens` — gleiche Linie wie die uebrigen Zustaende: jeder traegt die Aktionen, die in
+ihm moeglich sind. CameraX kann das Objektiv nicht im Betrieb wechseln, deshalb bindet der
+`DisposableEffect` bei Aenderung neu (Key `desiredLens`).
+
+**Wichtig dabei — Frontkamera-Spiegelung:** Die *Vorschau* der Frontkamera ist gespiegelt
+(macht jede Kamera-App so), die *Analyse-Frames* sind es nicht — die kommen roh vom Sensor.
+Ohne Korrektur zeigt jeder Hinweis beim Selfie in die falsche Richtung. `CameraFrame` traegt
+deshalb ein `mirrored`-Flag, und `analyze()` spiegelt die Gesichter ueber
+`FaceRect.mirroredHorizontally()` (commonMain, 7 Unit-Tests).
+
+Nicht gespiegelt wird die **Horizont-Neigung**: die misst die physische Geraetelage, und
+die aendert sich nicht dadurch, welche Kamera aktiv ist.
+
+Offen und bewusst so gelassen: Das *gespeicherte* Selfie ist nicht gespiegelt (CameraX-
+Standard, so kennt man es von jeder Kamera-App) — es unterscheidet sich also spiegelbildlich
+von der Vorschau, auf die sich die Hinweise bezogen. Fuer die Beurteilung der Komposition
+ist das unkritisch (Drittel-Punkte bilden sich auf Drittel-Punkte ab), sollte aber nach dem
+Feldtest bewusst entschieden werden.
+
 **Build/Run (Android):**
 - `./gradlew :androidApp:assembleDebug` — Debug-APK bauen
 - Im Android Studio Projekt oeffnen (nutzt dessen gebuendeltes JBR) oder lokal:

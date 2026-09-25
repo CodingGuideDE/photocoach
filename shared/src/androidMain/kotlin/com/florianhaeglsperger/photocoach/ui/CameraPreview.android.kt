@@ -80,6 +80,10 @@ actual fun CameraPreview(
     val activity = remember(context) { context.findComponentActivity() }
 
     var permissionGranted by remember { mutableStateOf(context.hasCameraPermission()) }
+    // Gewuenschtes Objektiv. Aendert sich das, laeuft der DisposableEffect unten erneut
+    // und bindet die Kamera neu — CameraX kann das Objektiv nicht im laufenden Betrieb
+    // wechseln.
+    var desiredLens by remember { mutableStateOf(LensFacing.BACK) }
     var cameraState by remember { mutableStateOf<CameraState>(CameraState.Initializing) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -126,6 +130,9 @@ actual fun CameraPreview(
     val currentOnAnalysis by rememberUpdatedState(onAnalysis)
 
     val frameAnalyzer = remember { FrameAnalyzer() }
+    // Tatsaechlich gebundenes Objektiv (kann vom gewuenschten abweichen, wenn es fehlt).
+    // Der Analyzer braucht es, um die Frontkamera-Spiegelung auszugleichen.
+    var activeLensFacing by remember { mutableStateOf(LensFacing.BACK) }
 
     // Der Horizont kommt auf Android aus dem Schwerkraft-Sensor, nicht aus dem Bild
     // (siehe HorizonSensor fuer die Einschraenkung, die das mit sich bringt).
@@ -201,7 +208,11 @@ actual fun CameraPreview(
                         if (nowMs - lastAnalysisMs >= ANALYSIS_INTERVAL_MS) {
                             lastAnalysisMs = nowMs
                             val result = frameAnalyzer.analyze(
-                                CameraFrame(imageProxy, horizonSensor.currentTiltDegrees()),
+                                CameraFrame(
+                                    image = imageProxy,
+                                    tiltDegrees = horizonSensor.currentTiltDegrees(),
+                                    mirrored = activeLensFacing == LensFacing.FRONT,
+                                ),
                             )
                             // Zurueck auf den Main-Thread, damit die UI das Ergebnis
                             // direkt in Compose-State schreiben kann.
@@ -214,7 +225,7 @@ actual fun CameraPreview(
             }
     }
 
-    DisposableEffect(previewView, imageAnalysis, permissionGranted, activity) {
+    DisposableEffect(previewView, imageAnalysis, permissionGranted, activity, desiredLens) {
         if (!permissionGranted) {
             cameraState = CameraState.PermissionRequired(requestPermission)
             return@DisposableEffect onDispose { }
@@ -241,22 +252,31 @@ actual fun CameraPreview(
                     val cameraProvider = future.get()
                     provider = cameraProvider
 
-                    // Emulator-Images haben nicht immer eine Rueckkamera konfiguriert,
-                    // deshalb Fallback auf die Frontkamera statt harter Fehler.
-                    val selector = when {
-                        cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) ->
-                            CameraSelector.DEFAULT_BACK_CAMERA
+                    val hasBack = cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)
+                    val hasFront = cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)
 
-                        cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) ->
-                            CameraSelector.DEFAULT_FRONT_CAMERA
-
+                    // Gewuenschtes Objektiv, wenn vorhanden — sonst das andere. Emulator-Images
+                    // haben nicht immer beide, und ein harter Fehler waere hier die schlechtere
+                    // Antwort als "nimm was da ist".
+                    val activeLens = when {
+                        desiredLens == LensFacing.BACK && hasBack -> LensFacing.BACK
+                        desiredLens == LensFacing.FRONT && hasFront -> LensFacing.FRONT
+                        hasBack -> LensFacing.BACK
+                        hasFront -> LensFacing.FRONT
                         else -> null
                     }
 
-                    if (selector == null) {
+                    if (activeLens == null) {
                         cameraState = CameraState.Error("Keine Kamera auf diesem Geraet gefunden.")
                         return@addListener
                     }
+
+                    val selector = if (activeLens == LensFacing.FRONT) {
+                        CameraSelector.DEFAULT_FRONT_CAMERA
+                    } else {
+                        CameraSelector.DEFAULT_BACK_CAMERA
+                    }
+                    activeLensFacing = activeLens
 
                     val preview = Preview.Builder().build().apply {
                         surfaceProvider = previewView.surfaceProvider
@@ -288,6 +308,9 @@ actual fun CameraPreview(
                         takePhoto = { onResult ->
                             imageCapture.saveToGallery(context, onResult)
                         },
+                        lensFacing = activeLens,
+                        canSwitchLens = hasBack && hasFront,
+                        switchLens = { desiredLens = activeLens.opposite() },
                     )
                 } catch (t: Throwable) {
                     cameraState = CameraState.Error(t.message ?: t::class.java.simpleName)

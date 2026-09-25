@@ -48,3 +48,29 @@ data class FaceRect(
     val right: Float,
     val bottom: Float,
 )
+
+/**
+ * Spiegelt ein Rechteck an der senkrechten Bildmitte.
+ *
+ * **Wofuer:** Die Vorschau der Frontkamera ist gespiegelt — so kennt man es vom Spiegel,
+ * und jede Kamera-App macht das so. Die Analyse-Frames sind es aber **nicht**: sie kommen
+ * roh vom Sensor. Ein Gesicht, das der Nutzer links im Bild sieht, liegt in den
+ * Analyse-Koordinaten also rechts.
+ *
+ * Ohne diese Korrektur wuerde die App beim Selfie exakt in die falsche Richtung schicken —
+ * derselbe Vorzeichen-Fehlertyp wie bei der Geraeteneigung und der Bildschirmdrehung.
+ *
+ * **Nicht betroffen ist die Horizont-Neigung:** die misst die physische Lage des Geraets.
+ * Welche Kamera aktiv ist und ob die Vorschau gespiegelt wird, aendert nicht, welche Seite
+ * des Geraets tiefer liegt.
+ */
+fun FaceRect.mirroredHorizontally(): FaceRect = FaceRect(
+    // left und right tauschen die Rollen: der linke Rand wird zum gespiegelten rechten.
+    left = 1f - right,
+    top = top,
+    right = 1f - left,
+    bottom = bottom,
+)
+
+/** Spiegelt einen Saliency-Punkt an der senkrechten Bildmitte, siehe [mirroredHorizontally]. */
+fun SaliencyPoint.mirroredHorizontally(): SaliencyPoint = copy(x = 1f - x)
