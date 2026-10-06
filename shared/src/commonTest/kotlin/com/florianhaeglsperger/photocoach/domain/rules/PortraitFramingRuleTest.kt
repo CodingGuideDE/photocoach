@@ -6,6 +6,7 @@ import com.florianhaeglsperger.photocoach.domain.model.FaceRect
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PortraitFramingRuleTest {
 
@@ -40,45 +41,62 @@ class PortraitFramingRuleTest {
     }
 
     @Test
-    fun `Gesicht links der Mitte mit wenig Platz rechts warnt in Blickrichtung`() {
-        // Bewusst per FaceRect statt faceAt konstruiert: die Mitte muss klar links liegen,
-        // waehrend der rechte Rand fast den Bildrand erreicht — mit faceAt (symmetrisch um
-        // die Mitte) laesst sich das nicht ausdruecken.
-        val face = FaceRect(left = -0.1f, top = 0.3f, right = 0.95f, bottom = 0.7f)
+    fun `Gesicht am linken Rand warnt vor seitlichem Anschnitt`() {
+        val face = FaceRect(left = 0f, top = 0.3f, right = 0.3f, bottom = 0.6f)
 
         val hint = PortraitFramingRule.evaluate(frame(faces = listOf(face)))
 
-        assertEquals("Wenig Platz in Blickrichtung — Kamera etwas nach rechts schwenken.", hint?.message)
+        assertEquals(
+            "Gesicht am linken Rand angeschnitten — Kamera etwas nach links schwenken.",
+            hint?.message,
+        )
     }
 
     @Test
-    fun `Gesicht rechts der Mitte mit wenig Platz links warnt in Blickrichtung`() {
-        val face = FaceRect(left = 0.05f, top = 0.3f, right = 1.1f, bottom = 0.7f)
+    fun `Gesicht am rechten Rand warnt vor seitlichem Anschnitt`() {
+        val face = FaceRect(left = 0.75f, top = 0.3f, right = 0.995f, bottom = 0.6f)
 
         val hint = PortraitFramingRule.evaluate(frame(faces = listOf(face)))
 
-        assertEquals("Wenig Platz in Blickrichtung — Kamera etwas nach links schwenken.", hint?.message)
+        assertEquals(
+            "Gesicht am rechten Rand angeschnitten — Kamera etwas nach rechts schwenken.",
+            hint?.message,
+        )
     }
 
     @Test
-    fun `Gesicht nahe der Mitte loest trotz wenig Randabstand keine Blickraum-Warnung aus`() {
-        // Ohne die Zentrums-Totzone waere hier die "wenig Platz rechts"-Warnung faellig
-        // (centerX = 0.46, rechter Rand nur 0.1 Platz) - so nah an der Mitte ist die
-        // geschaetzte Blickrichtung aber nicht verlaesslich.
-        val face = FaceRect(left = 0.02f, top = 0.3f, right = 0.9f, bottom = 0.7f)
+    fun `Gesicht am Drittel mit Abstand zum Rand ist unkritisch`() {
+        // Regressionsfall zur frueheren Blickraum-Pruefung: die konnte mit echten, auf 0..1
+        // begrenzten Rechtecken nie ausloesen. Die Nachfolgerin darf hier ebenfalls
+        // schweigen — aber weil der Rand frei ist, nicht weil sie nie greift.
+        val face = faceAt(centerX = 1f / 3f, centerY = 0.4f, size = 0.25f)
 
-        assertNull(PortraitFramingRule.evaluate(frame(faces = listOf(face))))
+        val assessment = PortraitFramingRule.assess(frame(faces = listOf(face)))
+
+        assertNull(assessment?.hint)
+        assertEquals(1f, assessment?.score)
     }
 
     @Test
-    fun `Kopf-Abschnitt hat Vorrang vor der Blickraum-Warnung`() {
-        // Beides trifft zu: Kopf oben abgeschnitten UND wenig Platz rechts - laut Prioritaet
+    fun `Kopf-Abschnitt hat Vorrang vor dem seitlichen Anschnitt`() {
+        // Beides trifft zu: Kopf oben abgeschnitten UND am linken Rand - laut Prioritaet
         // in der Regel muss der Kopf-Hinweis gewinnen.
-        val face = FaceRect(left = -0.1f, top = 0.0f, right = 0.95f, bottom = 0.4f)
+        val face = FaceRect(left = 0f, top = 0.0f, right = 0.4f, bottom = 0.4f)
 
         val hint = PortraitFramingRule.evaluate(frame(faces = listOf(face)))
 
         assertEquals("Kopf fast abgeschnitten — Kamera etwas nach oben schwenken.", hint?.message)
+    }
+
+    @Test
+    fun `Score sinkt - je naeher das Gesicht dem Rand kommt`() {
+        fun scoreAtTop(top: Float) = PortraitFramingRule.assess(
+            frame(faces = listOf(FaceRect(left = 0.4f, top = top, right = 0.6f, bottom = top + 0.2f))),
+        )!!.score
+
+        assertTrue(scoreAtTop(0.2f) > scoreAtTop(0.08f))
+        assertTrue(scoreAtTop(0.08f) > scoreAtTop(0.02f))
+        assertEquals(0f, scoreAtTop(0f))
     }
 
     @Test

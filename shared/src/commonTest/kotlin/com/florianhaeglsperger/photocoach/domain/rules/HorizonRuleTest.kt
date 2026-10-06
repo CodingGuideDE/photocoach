@@ -4,6 +4,7 @@ import com.florianhaeglsperger.photocoach.domain.frame
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class HorizonRuleTest {
 
@@ -19,15 +20,15 @@ class HorizonRuleTest {
 
     @Test
     fun `Neigung innerhalb der Toleranz ergibt keinen Hinweis`() {
-        assertNull(HorizonRule.evaluate(frame(tiltDegrees = 2f)))
-        assertNull(HorizonRule.evaluate(frame(tiltDegrees = -1.9f)))
+        assertNull(HorizonRule.evaluate(frame(tiltDegrees = 4f)))
+        assertNull(HorizonRule.evaluate(frame(tiltDegrees = -3.9f)))
     }
 
     @Test
     fun `Grenzfall knapp ueber der Toleranz warnt bereits`() {
-        val hint = HorizonRule.evaluate(frame(tiltDegrees = 2.1f))
+        val hint = HorizonRule.evaluate(frame(tiltDegrees = 4.1f))
 
-        assertEquals("Horizont ca. 2° schief — rechte Seite anheben.", hint?.message)
+        assertEquals("Horizont ca. 4° schief — rechte Seite anheben.", hint?.message)
     }
 
     @Test
@@ -49,5 +50,24 @@ class HorizonRuleTest {
         val hint = HorizonRule.evaluate(frame(tiltDegrees = 8.6f))
 
         assertEquals("Horizont ca. 9° schief — rechte Seite anheben.", hint?.message)
+    }
+
+    @Test
+    fun `kopfueber gehaltenes Geraet ist kein schiefer Horizont`() {
+        // Im Emulator beobachtet: -180° Neigung bei aufrechter Anzeige. "180° schief —
+        // linke Seite anheben" ist kein befolgbarer Hinweis.
+        assertNull(HorizonRule.assess(frame(tiltDegrees = -180f)))
+        assertNull(HorizonRule.assess(frame(tiltDegrees = 90f)))
+    }
+
+    @Test
+    fun `Score faellt mit der Neigung`() {
+        val straight = HorizonRule.assess(frame(tiltDegrees = 0f))!!.score
+        val slight = HorizonRule.assess(frame(tiltDegrees = 3f))!!.score
+        val strong = HorizonRule.assess(frame(tiltDegrees = 15f))!!.score
+
+        assertEquals(1f, straight)
+        assertTrue(slight in 0.8f..0.99f, "3° -> $slight")
+        assertEquals(0f, strong)
     }
 }

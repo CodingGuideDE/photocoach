@@ -165,16 +165,19 @@ Keine weitere Arbeit hier, bis die Bedingungen aus Abschnitt 0 erfüllt sind.
       berechnen, Score + Richtungshinweis ("Motiv 12% zu weit links von der optimalen
       Position")
 - [x] `HorizonRule`: Warnung bei `horizonTiltDegrees` > 2°
-- [ ] `DeadSpaceRule` — **blockiert**: braucht Saliency, auf Android noch leer (§11).
-      Anteil des Bilds ohne Saliency pro Bildhälfte vergleichen,
-      Warnung bei starker Asymmetrie ohne erkennbaren Grund (z. B. Blickrichtung)
-- [x] `PortraitFramingRule`: bei erkanntem Gesicht — Kopf nicht zu weit oben/unten
-      abgeschnitten, ausreichend Blickraum in Blickrichtung (Blickrichtung grob aus
-      Gesichts-Bounding-Box-Position relativ zu Bildmitte geschätzt)
-- [~] `CompositionScorer`: **Auswahl eines Hinweises fertig** (`domain/scoring/`:
-      `HintSelector` priorisiert nach Reparierbarkeit, `HintStabilizer` dämpft gegen
-      Flackern bei 10 Hz). **Der 0-100-Score fehlt** — dafür müssten die Regeln melden,
-      *wie stark* sie verletzt sind, nicht nur „Hinweis oder nicht". Eigener Schritt.
+- [x] `DeadSpaceRule` (30.09.2026): Anteil des Saliency-Gewichts pro Bildhälfte,
+      Warnung unter 10 % — begründet (keine Warnung), wenn das Motiv auf der Achse nahe
+      einer Drittel-Linie liegt. Blickrichtung als Begründung fehlt noch (s. u.).
+- [~] `PortraitFramingRule`: Kopf oben/unten und seitlich angeschnitten ✅. **Blickraum ❌**:
+      die Schätzung „Blickrichtung aus Lage relativ zur Bildmitte" ist zirkulär (ein Gesicht
+      links der Mitte hat nach rechts immer Platz) — die Prüfung konnte nie auslösen und
+      wurde am 30.09.2026 entfernt. Braucht echte Kopfdrehung (ML Kit `headEulerAngleY`),
+      deren Vorzeichen zuerst am Gerät belegt werden muss.
+- [x] `CompositionScorer` (30.09.2026): ein Hinweis nach Reparierbarkeit (Rahmung →
+      Horizont → Drittel → tote Fläche) **und 0-100-Score** — Regeln melden über
+      `ScoredRule.assess()` einen Score 0..1, der Scorer mittelt gewichtet (Rahmung/Horizont
+      1,0; Drittel 0,6 × Motiv-Sicherheit; tote Fläche 0,7). Ohne inhaltliche Regel kein
+      Score und „Kein klares Motiv erkannt" statt „Komposition passt".
 
 #### 3.2.1 `RuleOfThirdsRule` — konkrete Umsetzung
 
@@ -360,15 +363,16 @@ Seit Abschnitt 0 der einzige aktive Sensorik-Pfad.
 - [x] Horizont: `SensorManager` (Schwerkraft-Sensor) statt Bildanalyse —
       deckt den Hauptfall (Gerät schief gehalten) ab, deckt NICHT den Fall "Gerät gerade,
       Horizont im Bild schief" ab (siehe Umsetzbarkeit.md, akzeptierte Einschränkung für v1)
-- [ ] **← Engpass Nr. 1.** Saliency: leichtes offenes TFLite-Modell (z. B. U2Net-lite oder vergleichbar,
-      < 5 MB, quantisiert) einbinden — **Rechercheaufgabe:** konkretes Modell mit
-      passender Lizenz und Mobile-Performance evaluieren, bevor Implementierung startet
-- [~] `FrameAnalysis` befüllt bis auf `saliencyRegions`
+- [x] Saliency (30.09.2026): **Spectral Residual**, die modellfreie Option aus §11 —
+      pures Kotlin in `commonMain`, 64×64 aus der Y-Ebene, Ausgabe im selben 12×12-Format
+      wie iOS. Ein TFLite-Modell (U²-Netp) bleibt als Upgrade möglich, falls der Feldtest
+      zeigt, dass die Qualität nicht reicht.
+- [x] `FrameAnalysis` vollständig befüllt
 
 ### 3.4 UI (Compose, geteilt)
 - [x] `ScoreOverlay`: Leiste am oberen Rand, Symbol + Text, immer nur ein Hinweis,
       gedämpft gegen Flackern. Kein Overlay über dem Sucherbild.
-- [ ] Grid-Overlay (Drittel-Regel) ein-/ausblendbar
+- [x] Grid-Overlay (Drittel-Regel) ein-/ausblendbar
 - [ ] Ton/Haptik-Trigger bei Score-Sprung (dezent, kein Dauer-Feedback)
 
 ### 3.5 Testing
@@ -401,9 +405,66 @@ da Daten aus Phase 1 bereits vorliegen.
       CoreML (iOS) **und** LiteRT (Android) — zwei Artefakte aus einer Quelle,
       `coremltools` bzw. TFLite-Converter
 - [ ] Galerie-Ansicht mit Score pro Foto, Sortierung/Filter
+      *Teilweise vorgezogen:* Vollbild-Ansicht mit Blättern durch alle App-Fotos steht
+      (Abschnitt 4a, Stufe A). Der Score pro Foto kommt mit Stufe B dort.
 
 **Definition of Done:** Nutzer sieht während der Aufnahme *und* danach nicht nur
 eine Zahl, sondern nachvollziehbare visuelle Begründung.
+
+---
+
+## 4a. Foto-Ansicht & -Bearbeitung (Begleitstrang, ca. 4–5 Wochen)
+
+Details, Architektur und offene Entscheidungen: **`Foto-Bearbeitung.md`**. Leitidee:
+Bearbeiten als Fortsetzung des Coachings. Die App *schlägt vor* (begradigen, besser
+zuschneiden), mit Begründung aus denselben Regeln wie im Sucher, statt einen Werkzeugkasten
+mit zwanzig Reglern hinzustellen.
+
+Läuft neben den Phasen statt danach: Stufe B *ist* der Nach-Aufnahme-Teil von Phase 2, und
+Smart-Crop pro Format (Stufe C) baut die Brücke zum Story-Coach in Phase 5.
+
+**Stufe A — Grundfunktionen im Viewer** ✅ (06.10.2026)
+- [x] Vollbild-Ansicht, Öffnen aus der Vorschau, Zoomen, Wegwischen
+- [x] Blättern durch alle App-Fotos
+- [x] Löschen (Papierkorb oben rechts, Bestätigung, danach nächstes Foto)
+- [x] Teilen über den System-Dialog (ohne neue Berechtigung)
+- [x] Info: Aufnahmedaten aus EXIF und MediaStore (Zeit, Auflösung, Belichtung, Blende, ISO,
+      Brennweite, Weißabgleich, Blitz, Kamera, Datei)
+
+**Voraussetzung für B–E: Aufnahme-Metadaten** (`Foto-Bearbeitung.md` 4.3) — *möglichst bald*
+- [ ] `CaptureMeta` beim Speichern mitschreiben: Sensor-Neigung, Objektiv, Zoom,
+      Pro-Einstellungen, Score und Hinweis zum Aufnahmezeitpunkt
+- [ ] Info-Ansicht um Objektiv, Zoom und Aufnahme-Score ergänzen (stehen nicht im EXIF)
+- [ ] Entscheidung Speicherort: app-intern (empfohlen) oder XMP in der Datei
+
+**Stufe B — Kompositions-Analyse des fertigen Fotos** (~4 Tage)
+- [ ] Standbild-Einstieg in den `FrameAnalyzer` (ML Kit auf Bitmap, Spectral Residual)
+- [ ] Score und Hinweis im Viewer über den bestehenden `CompositionScorer`
+- [ ] Einblendbar: Drittel-Raster, Saliency-Heatmap, erkannte Gesichter
+- [ ] Aktionsleiste um „Analyse“ erweitern
+
+**Stufe C — Kompositions-Bearbeitung** (~8 Tage, Kern)
+- [ ] `EditRecipe` + Geometrie in `domain/edit/`, unit-getestet
+- [ ] Begradigen (±15°, Auto-Beschnitt ohne schwarze Ecken), Vorschlag aus Sensor-Neigung
+- [ ] Zuschneiden: frei und in festen Formaten (4:3, 1:1, 4:5, 9:16, 3:2, 16:9)
+- [ ] Smart-Crop: Kandidaten-Suche über `CompositionScorer`, beste drei mit Score
+      vorher/nachher
+- [ ] Drehen in 90°-Schritten, Spiegeln (löst die offene Selfie-Spiegel-Frage)
+- [ ] Export: als Kopie speichern, EXIF übernehmen (`PhotoLibrary.save`)
+- [ ] Aktionsleiste um „Bearbeiten“ erweitern
+
+**Stufe D — Licht & Farbe** (~5 Tage)
+- [ ] Belichtung, Kontrast, Sättigung, Wärme, Tönung (eine `ColorMatrix`, Echtzeit)
+- [ ] „Auto“ aus dem Histogramm, als Vorschlag mit Begründung
+
+**Stufe E — Bedienkomfort** (~3 Tage)
+- [ ] Vorher/Nachher (Finger aufs Bild)
+- [ ] Rückgängig/Wiederholen, alles zurücksetzen
+- [ ] Erneut bearbeiten (Rezept mitgespeichert)
+
+**Definition of Done (gesamt):** Ein absichtlich schief und mittig komponiertes Foto lässt
+sich in der App mit zwei angenommenen Vorschlägen (Begradigen, Zuschnitt) messbar
+verbessern; das Ergebnis liegt als Kopie in der Galerie, das Original bleibt erhalten.
 
 ---
 
@@ -491,7 +552,8 @@ Umsetzt Priorität aus Umsetzbarkeit.md Abschnitt 6.5. Bewusst spät, da Backend
 
 ## 11. Offene technische Entscheidungen
 
-- [ ] **Engpass Nr. 1 — Saliency auf Android.** Entweder ein Open-Source-Modell
+- [x] **Saliency auf Android — vorläufig entschieden (30.09.2026): Spectral Residual.**
+      Ursprünglicher Text: Entweder ein Open-Source-Modell
       (U²-Netp, Apache-2.0, ~4,7 MB — Achtung: nur der allgemeine Checkpoint, nicht
       `u2net_portrait`, der ist über APDrawing nicht-kommerziell) oder ein klassisches
       Verfahren ohne Modell (Spectral Residual o. ä., pures Kotlin in `commonMain`).
@@ -574,6 +636,7 @@ eine Plattform weniger spart vor allem in Phase 1, 3.5 und 8.
 | 2 — Erklärbares Overlay + Score | | 2-3 Wochen | ⬜ |
 | 3 — Textbasiertes Coaching | | 1-2 Wochen | ⬜ |
 | 4 — Aktive Hinweise (Heuristik) | | 3-4 Wochen | ⬜ |
+| 4a — Foto-Ansicht & -Bearbeitung | Begleitstrang, `Foto-Bearbeitung.md` | 4-5 Wochen | 🚧 Stufe A ✅ |
 | 5 — Story-Coach | | 2-3 Wochen | ⬜ |
 | 6 — Eigenes ML-Modell | optional | offen (Monate) | ⬜ |
 | 7 — Duell-Modus | optional | offen | ⬜ |
@@ -581,8 +644,8 @@ eine Plattform weniger spart vor allem in Phase 1, 3.5 und 8.
 | **Kern-Pfad (0-3+8)** | **differenzierter MVP für Android** | **~11-14 Wochen** | |
 | *iOS nachziehen* | *Kamera, Anbindung, Gerätetest, App Store* | *+3-4 Wochen* | *⏸️ pausiert* |
 
-**Was von Phase 1 noch fehlt:** Saliency auf Android (§11), `DeadSpaceRule`, der
-0-100-Score, Grid-Overlay und Haptik (3.4), Gerätetest (3.5).
+**Was von Phase 1 noch fehlt:** Haptik (3.4), Gerätetest (3.5) inkl. Kalibrierung der
+Saliency-Schwellen, Blickraum in `PortraitFramingRule`.
 
 **Empfehlung unverändert:** Nach Phase 1 innehalten und ehrlich bewerten, ob sich
 der Aufwand noch lohnt — das ist bereits ein kompletter, vorzeigbarer MVP.

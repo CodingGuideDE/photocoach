@@ -106,9 +106,9 @@ internal fun tiltFromGravity(
 private const val MIN_HORIZONTAL_GRAVITY = 2.0f
 
 private fun Int.toOffsetDegrees(): Float = when (this) {
-    Surface.ROTATION_90 -> -90f
+    Surface.ROTATION_90 -> 90f
     Surface.ROTATION_180 -> 180f
-    Surface.ROTATION_270 -> 90f
+    Surface.ROTATION_270 -> -90f
     else -> 0f
 }
 

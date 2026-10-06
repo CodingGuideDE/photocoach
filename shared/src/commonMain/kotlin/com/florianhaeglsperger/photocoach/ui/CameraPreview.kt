@@ -2,6 +2,8 @@ package com.florianhaeglsperger.photocoach.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.florianhaeglsperger.photocoach.capture.ManualCapabilities
+import com.florianhaeglsperger.photocoach.capture.ManualSettings
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 
 /**
@@ -9,11 +11,12 @@ import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
  *
  * [Success.location] ist bewusst ein anzeigbarer Text (z.B. "Pictures/PhotoCoach") und kein
  * Pfad/URI: der sieht auf jeder Plattform anders aus, und die UI in commonMain soll ihn nur
- * anzeigen, nicht interpretieren. Ab Phase 2 (Galerie mit Score pro Foto) kommt hier eine
- * plattformneutrale Foto-ID dazu.
+ * anzeigen, nicht interpretieren. Zum Wiederfinden dient [Success.photo] — eine
+ * plattformneutrale Referenz, die nur die [PhotoLibrary] deutet. `null`, wenn die Plattform
+ * keine liefert (der MediaStore meldet die URI nicht auf jedem Geraet zurueck).
  */
 sealed interface CaptureResult {
-    data class Success(val location: String) : CaptureResult
+    data class Success(val location: String, val photo: CapturedPhoto? = null) : CaptureResult
     data class Failure(val message: String) : CaptureResult
 }
 
@@ -45,17 +48,47 @@ sealed interface CameraState {
      *
      * [canSwitchLens] ist `false`, wenn das Geraet nur eine Kamera hat — dann wird der
      * Umschalter gar nicht erst angezeigt, statt einen Knopf ohne Wirkung anzubieten.
+     *
+     * [zoom] wird bei jeder Aenderung neu gemeldet (neue `Running`-Instanz), [setZoom]
+     * begrenzt selbst auf den erlaubten Bereich. Der Zoom wirkt auf Vorschau, Analyse und
+     * Foto gleichermassen — Hinweise und Aufnahme beziehen sich also auf denselben Ausschnitt.
      */
     data class Running(
         val takePhoto: (onResult: (CaptureResult) -> Unit) -> Unit,
         val lensFacing: LensFacing,
         val canSwitchLens: Boolean,
         val switchLens: () -> Unit,
+        val zoom: CameraZoom,
+        val setZoom: (Float) -> Unit,
+        /**
+         * Pro-Modus: was das aktive Objektiv manuell zulaesst, was gerade eingestellt ist,
+         * und wie man es aendert. [setManualSettings] begrenzt selbst auf [manualCapabilities];
+         * nach einem Objektivwechsel steht wieder alles auf Automatik.
+         */
+        val manualCapabilities: ManualCapabilities = ManualCapabilities.NONE,
+        val manualSettings: ManualSettings = ManualSettings(),
+        val setManualSettings: (ManualSettings) -> Unit = {},
     ) : CameraState
 
     /** Kamera konnte nicht gestartet werden (kein Geraet, belegt, Treiberfehler, ...). */
     data class Error(val message: String) : CameraState
 }
+
+/**
+ * Seitenverhaeltnis (lange / kurze Seite) von Vorschau, Analyse und Foto.
+ *
+ * 4:3 ist das native Format praktisch aller Handy-Sensoren; jedes andere Format ist ein
+ * Beschnitt. Die Plattform-Implementierungen fordern es explizit an, und [CameraScreen]
+ * zeigt die Vorschau in genau diesem Format — so sieht der Nutzer im Sucher denselben
+ * Ausschnitt, der gespeichert wird, und Drittel-Raster und Hinweise gelten fuer das Foto.
+ */
+const val SENSOR_ASPECT_RATIO = 4f / 3f
+
+/**
+ * Zoomstufe der aktiven Kamera. [min] unter 1 heisst: die Plattform schaltet unterhalb von
+ * 1× selbsttaetig auf das Ultraweitwinkel um.
+ */
+data class CameraZoom(val ratio: Float, val min: Float, val max: Float)
 
 /** Welche der beiden Kameras gerade aktiv ist. */
 enum class LensFacing {

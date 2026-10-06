@@ -6,7 +6,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,26 +23,24 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.florianhaeglsperger.photocoach.diagnostics.FieldLog
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
-import com.florianhaeglsperger.photocoach.domain.rules.Hint
-import com.florianhaeglsperger.photocoach.domain.rules.HorizonRule
-import com.florianhaeglsperger.photocoach.domain.rules.PortraitFramingRule
-import com.florianhaeglsperger.photocoach.domain.rules.Rule
-import com.florianhaeglsperger.photocoach.domain.rules.RuleOfThirdsRule
-import com.florianhaeglsperger.photocoach.domain.rules.ThirdsTargetTracker
-import com.florianhaeglsperger.photocoach.domain.scoring.HintSelector
-import com.florianhaeglsperger.photocoach.domain.scoring.HintStabilizer
-import com.florianhaeglsperger.photocoach.domain.subject.DefaultSubjectResolver
+import com.florianhaeglsperger.photocoach.domain.scoring.CompositionScorer
+import com.florianhaeglsperger.photocoach.domain.scoring.ScoreSmoother
+import com.florianhaeglsperger.photocoach.domain.scoring.Verdict
+import com.florianhaeglsperger.photocoach.domain.scoring.VerdictStabilizer
 import kotlinx.coroutines.delay
 
 /** Wie lange die Rueckmeldung nach dem Ausloesen stehen bleibt. */
@@ -59,16 +59,38 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     var capturing by remember { mutableStateOf(false) }
     var feedback: CaptureResult? by remember { mutableStateOf(null) }
     var analysis: FrameAnalysis? by remember { mutableStateOf(null) }
-    var hint: Hint? by remember { mutableStateOf(null) }
+    var verdict: Verdict by remember { mutableStateOf(Verdict.NoSubject) }
+    var score: Int? by remember { mutableStateOf(null) }
+    val hint = (verdict as? Verdict.Fix)?.hint
 
-    // Beide halten Zustand ueber Frames hinweg (Hysterese bzw. Mindestanzeigezeit) und
-    // gehoeren deshalb an den Screen, nicht in den Callback.
-    val hintSelector = remember { HintSelector() }
-    val hintStabilizer = remember { HintStabilizer() }
+    // Alle drei halten Zustand ueber Frames hinweg (Hysterese, Mindestanzeigezeit,
+    // Glaettung) und gehoeren deshalb an den Screen, nicht in den Callback.
+    val scorer = remember { CompositionScorer() }
+    val verdictStabilizer = remember { VerdictStabilizer() }
+    val scoreSmoother = remember { ScoreSmoother() }
     // Beim Feldtest (Plan 3.5) standardmaessig an: ohne sichtbare Drittel-Linien laesst
     // sich nicht beurteilen, ob ein Hinweis stimmt.
     var showGrid by remember { mutableStateOf(true) }
     var frameCount by remember { mutableStateOf(0) }
+    // Die Pinch-Geste startet nur einmal und braucht trotzdem den jeweils aktuellen Zustand.
+    val latestState by rememberUpdatedState(state)
+    var proOpen by remember { mutableStateOf(false) }
+    val zoomAnimator = rememberZoomAnimator()
+
+    // Letztes Foto: rund neben dem Ausloeser, antippen oeffnet es im Vollbild. Beim Start
+    // wird das juengste schon vorhandene Foto der App gesucht, danach ersetzt jede neue
+    // Aufnahme es.
+    val photoLibrary = rememberPhotoLibrary()
+    var lastPhoto: CapturedPhoto? by remember { mutableStateOf(null) }
+    var thumbnail: ImageBitmap? by remember { mutableStateOf(null) }
+    var thumbnailBounds: Rect? by remember { mutableStateOf(null) }
+    var viewerOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(photoLibrary) {
+        if (lastPhoto == null) lastPhoto = photoLibrary.latest()
+    }
+    LaunchedEffect(lastPhoto) {
+        thumbnail = lastPhoto?.let { photoLibrary.load(it, THUMBNAIL_MAX_DIMENSION) }
+    }
 
     // Rueckmeldung nach kurzer Zeit wieder ausblenden, damit sie den Sucher nicht dauerhaft
     // verstellt. Key ist das Ergebnis selbst: zwei Aufnahmen hintereinander starten den
@@ -80,27 +102,66 @@ fun CameraScreen(modifier: Modifier = Modifier) {
         }
     }
 
+    // Nach einem Objektivwechsel ist es eine neue Szene: der alte Drittel-Zielpunkt und die
+    // alte Aussage haben dazu keinen Bezug mehr (ThirdsTargetTracker.reset-Doku).
+    val activeLens = (state as? CameraState.Running)?.lensFacing
+    LaunchedEffect(activeLens) {
+        scorer.reset()
+        verdictStabilizer.reset()
+        // Eine noch laufende Zoom-Animation gehoert zur alten Kamera.
+        zoomAnimator.cancel()
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             // Schwarzer Grund, damit vor dem ersten Kamerabild nichts aufblitzt.
             .background(Color.Black),
     ) {
-        CameraPreview(
-            modifier = Modifier.fillMaxSize(),
-            onState = { state = it },
-            onAnalysis = {
-                analysis = it
-                val next = hintStabilizer.update(hintSelector.select(it), it.timestampMs)
-                // Nur bei Aenderung protokollieren, nicht bei jedem Frame — sonst steht
-                // in der Datei zehnmal pro Sekunde dasselbe.
-                if (next != hint) {
-                    FieldLog.append(next?.message ?: "— kein Hinweis —")
+        // Vorschau im Sensor-Format (4:3), nicht im Vollbild. Im Vollbild schnitt die
+        // Vorschau links und rechts ein grosses Stueck ab: das gespeicherte Foto war
+        // spuerbar weitwinkliger als das, was der Sucher gezeigt hatte, und Drittel-Raster
+        // und Hinweise bezogen sich auf einen anderen Ausschnitt als das Foto.
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val aspect = if (maxWidth > maxHeight) SENSOR_ASPECT_RATIO else 1f / SENSOR_ASPECT_RATIO
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .aspectRatio(aspect)
+                    .pinchToZoom(
+                        currentZoom = { (latestState as? CameraState.Running)?.zoom },
+                        onZoom = {
+                            // Der Finger hat Vorrang vor einer noch laufenden Animation.
+                            zoomAnimator.cancel()
+                            (latestState as? CameraState.Running)?.setZoom?.invoke(it)
+                        },
+                    ),
+            ) {
+                CameraPreview(
+                    modifier = Modifier.fillMaxSize(),
+                    onState = { state = it },
+                    onAnalysis = {
+                        analysis = it
+                        val assessment = scorer.assess(it)
+                        val next = verdictStabilizer.update(assessment.verdict, it.timestampMs)
+                        score = scoreSmoother.update(assessment.score, it.timestampMs)
+                        // Nur bei Aenderung protokollieren, nicht bei jedem Frame — sonst steht
+                        // in der Datei zehnmal pro Sekunde dasselbe.
+                        if (next != verdict) {
+                            FieldLog.append("${next.displayText()} (Score ${score ?: "—"})")
+                        }
+                        verdict = next
+                        frameCount++
+                    },
+                )
+
+                // Im selben Rahmen wie die Vorschau: das Raster muss auf dem Bildausschnitt
+                // liegen, nicht auf dem Bildschirm. Nur waehrend die Kamera laeuft.
+                if (state is CameraState.Running && showGrid) {
+                    ThirdsGrid(modifier = Modifier.fillMaxSize())
                 }
-                hint = next
-                frameCount++
-            },
-        )
+            }
+        }
 
         when (val current = state) {
             CameraState.Initializing -> StatusPanel {
@@ -138,45 +199,90 @@ fun CameraScreen(modifier: Modifier = Modifier) {
             }
 
             // Laeuft — freie Sicht auf das Motiv, nur der Ausloeser am unteren Rand.
-            is CameraState.Running -> Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(bottom = 48.dp),
-            ) {
-                // Ausloeser bleibt mittig — er ist das Hauptziel und soll dort liegen, wo
-                // der Daumen ihn blind findet. Der Objektiv-Wechsel haengt daneben, ohne
-                // die Mitte zu verschieben.
-                ShutterButton(
-                    enabled = !capturing,
-                    modifier = Modifier.align(Alignment.Center),
-                    onClick = {
-                        capturing = true
-                        // Markiert im Protokoll den Moment der Aufnahme — darueber lassen
-                        // sich Fotos und Hinweise hinterher zusammenbringen.
-                        FieldLog.append(
-                            ">>> FOTO (${current.lensFacing}) — angezeigt war: " +
-                                (hint?.message ?: "kein Hinweis"),
-                        )
-                        current.takePhoto { result ->
-                            capturing = false
-                            feedback = result
-                        }
-                    },
-                )
-
-                if (current.canSwitchLens) {
-                    LensToggle(
+            is CameraState.Running -> {
+                // Pro-Panel und Zoomleiste teilen sich denselben Platz ueber dem Ausloeser.
+                // Zoomen geht bei offenem Panel weiter per Pinch.
+                if (proOpen) {
+                    ProPanel(
+                        capabilities = current.manualCapabilities,
+                        settings = current.manualSettings,
+                        onChange = current.setManualSettings,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 132.dp),
+                    )
+                } else {
+                    ZoomBar(
+                        zoom = current.zoom,
                         lensFacing = current.lensFacing,
-                        enabled = !capturing,
-                        onClick = {
-                            FieldLog.append("Objektiv gewechselt zu ${current.lensFacing.opposite()}")
-                            current.switchLens()
+                        onSelect = { ratio ->
+                            FieldLog.append("Zoom ${formatZoom(ratio)}")
+                            zoomAnimator.animate(from = current.zoom.ratio, to = ratio) {
+                                (latestState as? CameraState.Running)?.setZoom?.invoke(it)
+                            }
                         },
                         modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .padding(end = 32.dp),
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 132.dp),
                     )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(bottom = 48.dp),
+                ) {
+                    // Ausloeser bleibt mittig — er ist das Hauptziel und soll dort liegen, wo
+                    // der Daumen ihn blind findet. Der Objektiv-Wechsel haengt daneben, ohne
+                    // die Mitte zu verschieben.
+                    ShutterButton(
+                        enabled = !capturing,
+                        modifier = Modifier.align(Alignment.Center),
+                        onClick = {
+                            capturing = true
+                            // Markiert im Protokoll den Moment der Aufnahme — darueber lassen
+                            // sich Fotos und Hinweise hinterher zusammenbringen.
+                            FieldLog.append(
+                                ">>> FOTO (${current.lensFacing}, ${formatZoom(current.zoom.ratio)}, " +
+                                    "${current.manualSettings.summary(current.manualCapabilities.exposureCompensation?.stepEv)}" +
+                                    ") — angezeigt war: " +
+                                    (hint?.message ?: "kein Hinweis"),
+                            )
+                            current.takePhoto { result ->
+                                capturing = false
+                                feedback = result
+                                (result as? CaptureResult.Success)?.photo?.let { lastPhoto = it }
+                            }
+                        },
+                    )
+
+                    // Gegenstueck zum Objektiv-Wechsel, links vom Ausloeser — dort, wo man
+                    // es von jeder Kamera-App kennt. Erscheint erst, wenn es ein Foto gibt.
+                    thumbnail?.let { bitmap ->
+                        PhotoThumbnail(
+                            bitmap = bitmap,
+                            onClick = { viewerOpen = true },
+                            onBounds = { thumbnailBounds = it },
+                            modifier = Modifier
+                                .align(Alignment.CenterStart)
+                                .padding(start = 30.dp),
+                        )
+                    }
+
+                    if (current.canSwitchLens) {
+                        LensToggle(
+                            lensFacing = current.lensFacing,
+                            enabled = !capturing,
+                            onClick = {
+                                FieldLog.append("Objektiv gewechselt zu ${current.lensFacing.opposite()}")
+                                current.switchLens()
+                            },
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .padding(end = 32.dp),
+                        )
+                    }
                 }
             }
         }
@@ -186,18 +292,14 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                 result = result,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 140.dp),
+                    // Ueber dem offenen Pro-Panel, sonst verdeckt es die Regler.
+                    .padding(bottom = if (proOpen) 330.dp else 200.dp),
             )
         }
 
         // Nur waehrend die Kamera laeuft: waehrend Berechtigungsdialog oder Fehler liegt
         // ohnehin ein Status-Panel darueber, und ein "Komposition passt" auf schwarzem
         // Grund waere schlicht falsch.
-        // Unter allen Bedienelementen, ueber dem Kamerabild.
-        if (state is CameraState.Running && showGrid) {
-            ThirdsGrid(modifier = Modifier.fillMaxSize())
-        }
-
         if (state is CameraState.Running) {
             GridToggle(
                 enabled = showGrid,
@@ -207,8 +309,22 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                     .padding(top = 108.dp, end = 16.dp),
             )
 
+            // Unter dem Raster-Knopf, gleiche Groesse: zwei Einstellungen, eine Spalte. Der
+            // Platz links vom Ausloeser gehoert seit dem 05.10.2026 der Foto-Vorschau.
+            val running = state as CameraState.Running
+            ProToggle(
+                open = proOpen,
+                anyManual = !running.manualSettings.isAllAuto,
+                onClick = { proOpen = !proOpen },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 160.dp, end = 16.dp)
+                    .size(40.dp),
+            )
+
             ScoreOverlay(
-                hint = hint,
+                verdict = verdict,
+                score = score,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 48.dp),
@@ -227,18 +343,28 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                     .padding(start = 16.dp, top = 108.dp),
             )
         }
+
+        // Zuoberst: liegt im Vollbild ueber allem, auch ueber Ausloeser und Hinweisleiste.
+        val openPhoto = lastPhoto
+        if (viewerOpen && openPhoto != null) {
+            PhotoViewer(
+                photo = openPhoto,
+                preview = thumbnail,
+                origin = thumbnailBounds,
+                library = photoLibrary,
+                onDeleted = { newest -> lastPhoto = newest },
+                onClosed = { viewerOpen = false },
+            )
+        }
     }
 }
 
 /**
  * Provisorische Anzeige, dass der Datenfluss Kamera -> FrameAnalyzer -> UI wirklich laeuft.
  *
- * Bewusst haesslich und offensichtlich temporaer: sie faellt weg, sobald hier in Phase 1/2
- * das echte ScoreOverlay haengt (Plan 3.4). Solange dort noch nichts haengt, ist die
- * Hinweiszeile hier auch der einzige Weg, die Regeln aus Plan 3.2 live zu sehen statt nur
- * per Unit-Test. Zeigt bewusst *alle* zutreffenden Regel-Hinweise gleichzeitig (nicht nur
- * einen priorisierten) — das Zusammenfassen zu einem einzigen Hinweis ist Aufgabe des noch
- * nicht implementierten `CompositionScorer`.
+ * Bewusst haesslich und offensichtlich temporaer. Zeigt nur Rohdaten (Neigung, Gesichter,
+ * Anzahl Saliency-Punkte) — Hinweise und Score gehoeren ins [ScoreOverlay]. Faellt weg,
+ * sobald der Geraetetest (Plan 3.5) bestaetigt hat, dass die Daten stimmen.
  */
 @Composable
 private fun AnalysisDebugBadge(

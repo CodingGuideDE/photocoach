@@ -3,8 +3,10 @@ package com.florianhaeglsperger.photocoach.capture
 import androidx.annotation.OptIn
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageProxy
+import com.florianhaeglsperger.photocoach.capture.saliency.SpectralResidualSaliency
 import com.florianhaeglsperger.photocoach.domain.model.FaceRect
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
+import com.florianhaeglsperger.photocoach.domain.model.SaliencyPoint
 import com.florianhaeglsperger.photocoach.domain.model.mirroredHorizontally
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
@@ -40,16 +42,12 @@ actual class CameraFrame(
 )
 
 /**
- * Android-Implementierung.
- *
- * Stand Phase 1 (teilweise):
- *  - `faces` — echt, ueber ML Kit Face Detection (on-device, gebuendeltes Modell)
- *  - `horizonTiltDegrees` — echt, aus dem Schwerkraft-Sensor (siehe [HorizonSensor])
- *  - `saliencyRegions` — noch leer. Braucht ein TFLite-Modell; welches, ist noch offen
- *    (Planung/Plan-zur-Umsetzung.md 11 und Planung/ML-Architektur.md 6.1).
- *
- * Bewusst leer gelassen statt mit Platzhalter-Werten gefuellt: eine Regel, die auf
- * erfundenen Saliency-Punkten rechnet, wuerde plausibel aussehen und waere trotzdem falsch.
+ * Android-Implementierung. Alle drei Felder sind echt:
+ *  - `faces` — ML Kit Face Detection (on-device, gebuendeltes Modell)
+ *  - `horizonTiltDegrees` — Schwerkraft-Sensor (siehe [HorizonSensor])
+ *  - `saliencyRegions` — Spectral Residual auf der Y-Ebene (siehe
+ *    [SpectralResidualSaliency]), modellfrei. Ein gelerntes Modell (Plan 11) kann spaeter
+ *    hier einspringen, ohne dass sich an den Regeln etwas aendert.
  */
 actual class FrameAnalyzer actual constructor() {
 
@@ -92,9 +90,14 @@ actual class FrameAnalyzer actual constructor() {
                 .map { if (frame.mirrored) it.mirroredHorizontally() else it }
         }
 
+        val saliency = detectSaliency(frame.image)
+            // Dieselbe Spiegelung wie bei den Gesichtern — beide muessen zu dem passen,
+            // was der Nutzer in der (gespiegelten) Frontkamera-Vorschau sieht.
+            .map { if (frame.mirrored) it.mirroredHorizontally() else it }
+
         return FrameAnalysis(
             horizonTiltDegrees = frame.tiltDegrees,
-            saliencyRegions = emptyList(),
+            saliencyRegions = saliency,
             faces = faces,
             // imageInfo.timestamp ist in Nanosekunden seit Boot.
             timestampMs = frame.image.imageInfo.timestamp / 1_000_000L,
@@ -119,6 +122,16 @@ actual class FrameAnalyzer actual constructor() {
      */
     private fun detectFaces(input: InputImage): List<Face> = try {
         Tasks.await(detector.process(input), DETECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    /**
+     * Wie bei den Gesichtern: lieber ein Frame ohne Saliency als eine abgerissene Pipeline.
+     * Faellt z. B. an, wenn ein Geraet ein anderes Bildformat als YUV_420_888 liefert.
+     */
+    private fun detectSaliency(image: ImageProxy): List<SaliencyPoint> = try {
+        SpectralResidualSaliency.analyze(image.uprightLuma(SpectralResidualSaliency.INPUT_SIZE))
     } catch (_: Exception) {
         emptyList()
     }

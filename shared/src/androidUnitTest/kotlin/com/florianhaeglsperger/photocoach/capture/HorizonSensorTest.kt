@@ -47,21 +47,22 @@ class HorizonSensorTest {
     // nicht des Geraets — beides ist gegenlaeufig. Android-Doku: "if the device is rotated
     // 90 degrees counter-clockwise ... the returned value will be Surface.ROTATION_90".
     //
+    // Der Sensor misst den Vektor nach OBEN (aufrecht: +Y = 9.81), nicht die Fallrichtung.
     // ROTATION_90  = Geraet gegen den Uhrzeigersinn gedreht, Oberkante zeigt nach LINKS.
-    //                Geraete-X zeigt dann nach oben, Schwerkraft liegt auf -X.
+    //                Geraete-X zeigt dann nach oben, der Sensor liest +X.
     // ROTATION_270 = Geraet im Uhrzeigersinn gedreht, Oberkante nach RECHTS,
-    //                Schwerkraft auf +X.
+    //                der Sensor liest -X.
 
     @Test
     fun `quer mit Oberkante links gilt als gerade`() {
-        val tilt = tiltFromGravity(gravityX = -9.81f, gravityY = 0f, displayRotation = Surface.ROTATION_90)
+        val tilt = tiltFromGravity(gravityX = 9.81f, gravityY = 0f, displayRotation = Surface.ROTATION_90)
 
         assertEquals(0f, tilt, "ohne Normalisierung gegen die Display-Rotation kaeme -90 heraus")
     }
 
     @Test
     fun `quer mit Oberkante rechts gilt als gerade`() {
-        val tilt = tiltFromGravity(gravityX = 9.81f, gravityY = 0f, displayRotation = Surface.ROTATION_270)
+        val tilt = tiltFromGravity(gravityX = -9.81f, gravityY = 0f, displayRotation = Surface.ROTATION_270)
 
         assertEquals(0f, tilt)
     }
@@ -69,9 +70,9 @@ class HorizonSensorTest {
     @Test
     fun `quer gehalten und dabei zusaetzlich geneigt`() {
         // Oberkante links (ROTATION_90) und dabei 15 Grad nach rechts gekippt:
-        // Grundstellung ist (-9.81, 0), die Neigung dreht den Vektor um 15 Grad.
-        // (sin(-90+15), cos(-90+15)) * 9.81 = (-9.476, 2.539)
-        val tilt = tiltFromGravity(gravityX = -9.476f, gravityY = 2.539f, displayRotation = Surface.ROTATION_90)
+        // Grundstellung ist (9.81, 0), die Neigung dreht den Vektor um 15 Grad.
+        // (sin(90+15), cos(90+15)) * 9.81 = (9.476, -2.539)
+        val tilt = tiltFromGravity(gravityX = 9.476f, gravityY = -2.539f, displayRotation = Surface.ROTATION_90)
 
         assertEquals(15f, tilt!!, absoluteTolerance = 0.2f)
     }

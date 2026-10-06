@@ -47,7 +47,7 @@ data class ThirdsEvaluation(
  * Bild, muss die Kamera nach links schwenken, damit der Bildinhalt relativ dazu nach rechts
  * wandert.
  */
-object RuleOfThirdsRule : Rule {
+object RuleOfThirdsRule : ScoredRule {
 
     /**
      * Unterhalb dieses Versatzes (Prozent der Bildbreite) gibt es keinen Hinweis.
@@ -60,18 +60,25 @@ object RuleOfThirdsRule : Rule {
 
     private val resolver: SubjectResolver = DefaultSubjectResolver
 
-    override fun evaluate(analysis: FrameAnalysis): Hint? = evaluate(analysis, target = null)
+    override fun assess(analysis: FrameAnalysis): RuleAssessment? = assess(analysis, target = null)
 
     /**
-     * Wie [evaluate], aber mit vorgegebenem Zielpunkt.
+     * Wie [assess], aber mit vorgegebenem Zielpunkt.
      *
      * Dafuer gedacht, dass die aufrufende Schicht einen [ThirdsTargetTracker] mitfuehrt und
      * dessen stabilisierten Zielpunkt hereinreicht. `null` heisst "nimm den naechstgelegenen"
      * und ist der zustandslose Fall.
      */
-    fun evaluate(analysis: FrameAnalysis, target: NormalizedPoint?): Hint? {
+    fun assess(analysis: FrameAnalysis, target: NormalizedPoint?): RuleAssessment? {
         val evaluation = analyse(analysis, target) ?: return null
+        return RuleAssessment(score = evaluation.score, hint = hintFor(evaluation))
+    }
 
+    /** Wie [evaluate], aber mit vorgegebenem Zielpunkt — siehe [assess]. */
+    fun evaluate(analysis: FrameAnalysis, target: NormalizedPoint?): Hint? =
+        assess(analysis, target)?.hint
+
+    private fun hintFor(evaluation: ThirdsEvaluation): Hint? {
         val offsetX = evaluation.offsetXPercent
         val offsetY = evaluation.offsetYPercent
         if (abs(offsetX) < MIN_OFFSET_PERCENT && abs(offsetY) < MIN_OFFSET_PERCENT) return null

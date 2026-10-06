@@ -20,7 +20,7 @@ zumüllen, das gehört in CLAUDE.md.
 | Phase | Status | Kurznotiz |
 |---|---|---|
 | 0 — Projekt-Setup | ✅ Fertig (Android) | KMP-Grundgerüst, Kamera-Vorschau, Foto-Aufnahme, Datenfluss zur UI |
-| 1 — MVP: Regelbasiertes Feedback | 🚧 ~⅔ | 3 von 4 Regeln fertig, ScoreOverlay live. Engpass: Saliency |
+| 1 — MVP: Regelbasiertes Feedback | 🚧 ~⅘ | Alle 4 Regeln + 0-100-Score + Saliency (Android) fertig. Offen: Gerätetest |
 | 2 — Erklärbares Overlay + Score | ⬜ Nicht begonnen | Braucht Saliency |
 | 3 — Textbasiertes Coaching | ⬜ Nicht begonnen | Konzept in CLAUDE.md/Umsetzbarkeit.md 6.1 festgehalten |
 | 4 — Aktive Richtungsvorschläge | ⬜ Nicht begonnen | |
@@ -53,7 +53,8 @@ zumüllen, das gehört in CLAUDE.md.
 - [x] `horizonTiltDegrees` — **echt**, Schwerkraftsensor (`HorizonSensor.kt`),
       gegen Display-Rotation normalisiert, Winkelmathematik unit-getestet
 - [x] `aspectRatio` — befüllt aus `uprightWidth/uprightHeight`
-- [ ] **`saliencyRegions` — leer. Engpass Nr. 1**, hängt an Plan §11
+- [x] `saliencyRegions` — **echt**, Spectral Residual (modellfrei, commonMain), 64×64 aus der
+      Y-Ebene → 12×12-Raster wie iOS. Qualität an echten Szenen noch ungeprüft
 
 ### Domain-Logik (`commonMain`, plattformneutral)
 - [x] `domain/geometry/Thirds` — Drittel-Linien und -Schnittpunkte, seitenverhältnis-korrigiert
@@ -61,16 +62,20 @@ zumüllen, das gehört in CLAUDE.md.
 - [x] `domain/rules/HorizonRule`
 - [x] `domain/rules/PortraitFramingRule`
 - [x] `domain/rules/RuleOfThirdsRule` + `ThirdsTargetTracker` (Hysterese gegen Zielspringen)
-- [x] `domain/scoring/HintSelector` — wählt **einen** Hinweis, priorisiert nach
-      Reparierbarkeit (Rahmung → Horizont → Drittel)
-- [x] `domain/scoring/HintStabilizer` — 1,8 s Mindestanzeigezeit gegen Flackern bei 10 Hz
-- [ ] `domain/rules/DeadSpaceRule` — **blockiert durch Saliency**
-- [ ] 0-100-Score des `CompositionScorer` — braucht Schweregrad statt „Hinweis ja/nein"
+- [x] `domain/rules/DeadSpaceRule` — leere Bildhälfte ohne Drittel-Begründung
+- [x] `domain/scoring/CompositionScorer` — **ein** Hinweis (Rangfolge nach Reparierbarkeit:
+      Rahmung → Horizont → Drittel → tote Fläche) **und 0-100-Score** (gewichteter Mittelwert
+      der `ScoredRule`-Scores). Ohne Motiv: kein Score, „Kein klares Motiv erkannt"
+- [x] `domain/scoring/VerdictStabilizer` — 1,8 s Mindestanzeigezeit für *jeden* Zustand
+- [x] `domain/scoring/ScoreSmoother` — Glättung der Zahl (EMA, 500 ms)
+- [~] `PortraitFramingRule` — Blickraum-Prüfung war toter Code, ersetzt durch seitlichen
+      Anschnitt. Echter Blickraum braucht Kopfdrehung (ML Kit), Vorzeichen erst am Gerät prüfen
 
 ### UI (`commonMain`)
 - [x] `ScoreOverlay` — Leiste oben, Symbol + Text, ein Hinweis, im Emulator verifiziert
       (Ruhe- und Warnzustand)
-- [ ] Grid-Overlay (Drittel-Regel), ein-/ausblendbar
+- [x] Grid-Overlay (Drittel-Regel), ein-/ausblendbar
+- [x] ScoreOverlay zeigt Score-Zahl + drei Zustände (Hinweis / passt / kein Motiv)
 - [ ] Dezenter Ton-/Haptik-Trigger
 - [~] `AnalysisDebugBadge` zeigt nur noch Rohdaten — fällt nach dem Gerätetest weg
 
@@ -91,14 +96,15 @@ zumüllen, das gehört in CLAUDE.md.
   (braucht `OrientationEventListener`)
 - Horizont-Erkennung deckt nur "Gerät schief gehalten" ab, nicht "Gerät gerade, Horizont
   im Bild schief" (akzeptierte v1-Einschränkung)
-- Ohne Saliency fällt `RuleOfThirdsRule` auf reine Gesichtserkennung zurück — bei Motiven
-  ohne Gesicht (Landschaft, Architektur) liefert sie auf Android gar nichts
+- Blickraum im Porträt fehlt (siehe oben) — braucht verifizierte Kopfdrehung
+- Horizont: im Emulator −180° Neigung bei aufrechter Anzeige beobachtet; `HorizonRule`
+  ignoriert jetzt > 45°, die Sensor-Ursache ist beim Gerätetest zu klären
 
 ### Nächste sinnvolle Schritte
-1. Saliency auf Android entscheiden und bauen (§11) — schaltet `DeadSpaceRule` frei und
-   macht `RuleOfThirdsRule` erst allgemein einsetzbar
-2. Gerätetest auf echtem Android-Gerät (3.5)
-3. Grid-Overlay (klein, sichtbarer Nutzen)
+1. Gerätetest auf echtem Android-Gerät (3.5) — Saliency-Qualität, Schwellwerte
+   (`DeadSpaceRule.EMPTY_SHARE`, Score-Gewichte) und Horizont-Vorzeichen kalibrieren
+2. Kopfdrehung (ML Kit `headEulerAngleY`) am Gerät loggen → Blickraum-Regel zurück
+3. Dezenter Haptik-Trigger bei Score-Sprung (3.4)
 
 ---
 

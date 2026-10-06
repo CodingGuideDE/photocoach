@@ -17,6 +17,9 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.ZoomState
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.runtime.Composable
@@ -31,9 +34,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Observer
 import com.florianhaeglsperger.photocoach.capture.CameraFrame
 import com.florianhaeglsperger.photocoach.capture.FrameAnalyzer
 import com.florianhaeglsperger.photocoach.capture.HorizonSensor
+import com.florianhaeglsperger.photocoach.capture.ManualCameraControl
+import com.florianhaeglsperger.photocoach.capture.ManualSettings
 import com.florianhaeglsperger.photocoach.diagnostics.FieldLog
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 import java.text.SimpleDateFormat
@@ -41,7 +47,7 @@ import java.util.concurrent.Executors
 import java.util.Locale
 
 /** Unterordner in der Galerie, in dem die Aufnahmen landen. */
-private const val ALBUM_NAME = "PhotoCoach"
+internal const val ALBUM_NAME = "PhotoCoach"
 
 /**
  * Mindestabstand zwischen zwei Analysen (~10 Hz).
@@ -107,7 +113,10 @@ actual fun CameraPreview(
 
     val previewView = remember(context) {
         PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FILL_CENTER
+            // FIT statt FILL: CameraScreen gibt der Vorschau bereits einen 4:3-Rahmen. Liefert
+            // ein Geraet ausnahmsweise kein 4:3, entstehen schmale Balken — besser als ein
+            // Beschnitt, der weniger zeigt, als das Foto enthaelt.
+            scaleType = PreviewView.ScaleType.FIT_CENTER
             // COMPATIBLE (TextureView) statt PERFORMANCE (SurfaceView): im Emulator
             // liefert SurfaceView je nach Image ein schwarzes Bild. Auf echter Hardware
             // spaeter ggf. auf PERFORMANCE umstellen (etwas geringere Latenz/Stromverbrauch).
@@ -117,6 +126,7 @@ actual fun CameraPreview(
 
     val imageCapture = remember {
         ImageCapture.Builder()
+            .setResolutionSelector(sensorAspectRatio())
             // MINIMIZE_LATENCY statt MAXIMIZE_QUALITY: die App ist ein Sucher-Coach,
             // ein spuerbar traeger Ausloeser waere hier schlimmer als etwas weniger
             // aggressive Nachbearbeitung.
@@ -130,6 +140,9 @@ actual fun CameraPreview(
     val currentOnAnalysis by rememberUpdatedState(onAnalysis)
 
     val frameAnalyzer = remember { FrameAnalyzer() }
+    // Pro-Modus (ISO, Verschlusszeit, ...). Haelt die letzten Messwerte der Automatik,
+    // deshalb einmal pro Composable und nicht pro Bind.
+    val manualControl = remember { ManualCameraControl() }
     // Tatsaechlich gebundenes Objektiv (kann vom gewuenschten abweichen, wenn es fehlt).
     // Der Analyzer braucht es, um die Frontkamera-Spiegelung auszugleichen.
     var activeLensFacing by remember { mutableStateOf(LensFacing.BACK) }
@@ -191,6 +204,9 @@ actual fun CameraPreview(
 
     val imageAnalysis = remember(context) {
         ImageAnalysis.Builder()
+            // Selbes Format wie Vorschau und Foto, sonst beziehen sich die normalisierten
+            // Koordinaten der Analyse auf einen anderen Ausschnitt als das Raster im Sucher.
+            .setResolutionSelector(sensorAspectRatio())
             // KEEP_ONLY_LATEST statt BLOCK_PRODUCER: lieber Frames verwerfen als eine
             // Warteschlange aufbauen. Veraltete Analyse-Ergebnisse waeren fuer einen
             // Live-Sucher wertlos — der Nutzer hat das Motiv laengst weitergeschwenkt.
@@ -242,6 +258,7 @@ actual fun CameraPreview(
 
         var disposed = false
         var provider: ProcessCameraProvider? = null
+        var stopZoomObserver: () -> Unit = {}
         val future = ProcessCameraProvider.getInstance(context)
 
         future.addListener(
@@ -278,7 +295,10 @@ actual fun CameraPreview(
                     }
                     activeLensFacing = activeLens
 
-                    val preview = Preview.Builder().build().apply {
+                    val preview = Preview.Builder()
+                        .setResolutionSelector(sensorAspectRatio())
+                        .also(manualControl::attachTo)
+                        .build().apply {
                         surfaceProvider = previewView.surfaceProvider
                     }
 
@@ -296,13 +316,42 @@ actual fun CameraPreview(
                     // unbindAll() vor dem Binden: sonst wirft CameraX beim erneuten
                     // Durchlauf (z.B. nach Berechtigungserteilung) einen Konflikt.
                     cameraProvider.unbindAll()
-                    cameraProvider.bindToLifecycle(
+                    val camera = cameraProvider.bindToLifecycle(
                         activity,
                         selector,
                         preview,
                         imageAnalysis,
                         imageCapture,
                     )
+
+                    // Zoom ueber CameraControl statt Beschnitt im Nachhinein: der Sensor-
+                    // Ausschnitt gilt dann fuer alle drei Use-Cases zugleich. Auf Geraeten,
+                    // deren Rueckkamera eine logische Multi-Kamera ist (Pixel, neuere
+                    // Samsung), liegt minZoomRatio unter 1 — Werte darunter schalten
+                    // automatisch aufs Ultraweitwinkel, oben aufs Tele.
+                    val zoomLiveData = camera.cameraInfo.zoomState
+                    val setZoom: (Float) -> Unit = { ratio ->
+                        val current = zoomLiveData.value
+                        val clamped = if (current == null) {
+                            ratio
+                        } else {
+                            ratio.coerceIn(current.minZoomRatio, current.maxZoomRatio)
+                        }
+                        // Das Future scheitert, wenn ein schnellerer Aufruf (Pinch) es
+                        // ueberholt — gewollt, deshalb wird es nicht ausgewertet.
+                        camera.cameraControl.setZoomRatio(clamped)
+                    }
+
+                    // Jede Bindung startet mit Automatik: Die Camera2-Optionen haengen an
+                    // der gebundenen Kamera, und das neue Objektiv kann andere Bereiche haben.
+                    val manualCapabilities = manualControl.capabilitiesOf(camera)
+                    val setManualSettings: (ManualSettings) -> Unit = { requested ->
+                        val settings = requested.coercedTo(manualCapabilities)
+                        manualControl.apply(camera, settings, manualCapabilities)
+                        (cameraState as? CameraState.Running)?.let {
+                            cameraState = it.copy(manualSettings = settings)
+                        }
+                    }
 
                     cameraState = CameraState.Running(
                         takePhoto = { onResult ->
@@ -311,7 +360,22 @@ actual fun CameraPreview(
                         lensFacing = activeLens,
                         canSwitchLens = hasBack && hasFront,
                         switchLens = { desiredLens = activeLens.opposite() },
+                        zoom = zoomLiveData.value?.toCameraZoom() ?: CameraZoom(1f, 1f, 1f),
+                        setZoom = setZoom,
+                        manualCapabilities = manualCapabilities,
+                        manualSettings = ManualSettings(),
+                        setManualSettings = setManualSettings,
                     )
+
+                    // Jede Zoom-Aenderung (Button, Pinch) kommt hierueber zurueck und wird
+                    // als neuer Running-Zustand gemeldet. Das Observe liefert den aktuellen
+                    // Wert auch sofort einmal aus.
+                    val observer = Observer<ZoomState> { zoomState ->
+                        val running = cameraState as? CameraState.Running ?: return@Observer
+                        cameraState = running.copy(zoom = zoomState.toCameraZoom())
+                    }
+                    zoomLiveData.observe(activity, observer)
+                    stopZoomObserver = { zoomLiveData.removeObserver(observer) }
                 } catch (t: Throwable) {
                     cameraState = CameraState.Error(t.message ?: t::class.java.simpleName)
                 }
@@ -321,15 +385,22 @@ actual fun CameraPreview(
 
         onDispose {
             disposed = true
+            stopZoomObserver()
+            // Kein clearAnalyzer() hier: der Analyzer wird nur einmal gesetzt (oben im
+            // remember), dieser Effect laeuft aber bei jedem Objektivwechsel neu. Mit
+            // clearAnalyzer() an dieser Stelle kam nach dem ersten Wechsel kein einziges
+            // Frame mehr an. unbindAll() stoppt den Frame-Strom ohnehin.
             provider?.unbindAll()
-            imageAnalysis.clearAnalyzer()
         }
     }
 
     // Eigener Effect: der Executor haengt am Leben des Composables, nicht am
     // Bind-Zyklus der Kamera (der bei Berechtigungswechseln mehrfach durchlaeuft).
     DisposableEffect(analysisExecutor) {
-        onDispose { analysisExecutor.shutdown() }
+        onDispose {
+            imageAnalysis.clearAnalyzer()
+            analysisExecutor.shutdown()
+        }
     }
 
     LaunchedEffect(cameraState) { onState(cameraState) }
@@ -339,6 +410,21 @@ actual fun CameraPreview(
         modifier = modifier,
     )
 }
+
+/**
+ * Fordert das Sensor-Format (4:3) an, siehe [SENSOR_ASPECT_RATIO]. Fallback auf das, was
+ * das Geraet hat — ein harter Fehler waere die schlechtere Antwort.
+ */
+private fun sensorAspectRatio(): ResolutionSelector =
+    ResolutionSelector.Builder()
+        .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+        .build()
+
+private fun ZoomState.toCameraZoom() = CameraZoom(
+    ratio = zoomRatio,
+    min = minZoomRatio,
+    max = maxZoomRatio,
+)
 
 /**
  * Loest aus und legt das Foto ueber den MediaStore in der Galerie ab.
@@ -356,7 +442,7 @@ private fun ImageCapture.saveToGallery(
         .format(System.currentTimeMillis())
 
     val values = ContentValues().apply {
-        put(MediaStore.MediaColumns.DISPLAY_NAME, "PhotoCoach_$timestamp.jpg")
+        put(MediaStore.MediaColumns.DISPLAY_NAME, "$PHOTO_NAME_PREFIX$timestamp.jpg")
         put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             // RELATIVE_PATH gibt es erst ab API 29; darunter landet das Foto im
@@ -374,7 +460,12 @@ private fun ImageCapture.saveToGallery(
         ContextCompat.getMainExecutor(context),
         object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                onResult(CaptureResult.Success("Galerie › $ALBUM_NAME"))
+                onResult(
+                    CaptureResult.Success(
+                        location = "Galerie › $ALBUM_NAME",
+                        photo = output.savedUri?.let { CapturedPhoto(it.toString()) },
+                    ),
+                )
             }
 
             override fun onError(exception: ImageCaptureException) {
