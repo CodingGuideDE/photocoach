@@ -110,4 +110,29 @@ class SubjectResolverTest {
 
         assertTrue(assertNotNull(alone).confidence > assertNotNull(contested).confidence)
     }
+
+    @Test
+    fun `Gesicht liefert seinen Rahmen als Bounds`() {
+        val subject = assertNotNull(resolver.resolve(frame(faces = listOf(faceAt(0.5f, 0.4f, size = 0.2f)))))
+
+        val bounds = assertNotNull(subject.bounds)
+        assertEquals(0.4f, bounds.left, 0.001f)
+        assertEquals(0.3f, bounds.top, 0.001f)
+        assertEquals(0.6f, bounds.right, 0.001f)
+        assertEquals(0.5f, bounds.bottom, 0.001f)
+    }
+
+    @Test
+    fun `Saliency-Bounds umschliessen den Klumpen und bleiben im Bild`() {
+        val subject = assertNotNull(
+            resolver.resolve(frame(saliency = listOf(subjectAt(0.02f, 0.5f), subjectAt(0.1f, 0.5f)), aspectRatio = 1f)),
+        )
+
+        val bounds = assertNotNull(subject.bounds)
+        assertTrue(bounds.left >= 0f && bounds.right <= 1f && bounds.top >= 0f && bounds.bottom <= 1f)
+        assertTrue(bounds.left <= 0.0201f && bounds.right >= 0.0999f)
+        // Einzelner Punkt in der Mitte: trotzdem ein sichtbares Rechteck.
+        val single = assertNotNull(resolver.resolve(frame(saliency = listOf(subjectAt(0.5f, 0.5f)), aspectRatio = 1f)))
+        assertTrue(assertNotNull(single.bounds).right - single.bounds!!.left > 0f)
+    }
 }

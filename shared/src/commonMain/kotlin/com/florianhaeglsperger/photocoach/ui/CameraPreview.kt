@@ -68,6 +68,22 @@ sealed interface CameraState {
         val manualCapabilities: ManualCapabilities = ManualCapabilities.NONE,
         val manualSettings: ManualSettings = ManualSettings(),
         val setManualSettings: (ManualSettings) -> Unit = {},
+        /**
+         * Fokus und Belichtungsmessung auf einen angetippten Punkt. `false`, wenn das Objektiv
+         * weder Fokus- noch Belichtungsbereiche kennt — dann reagiert der Sucher nicht auf Tippen.
+         */
+        val canFocusAtPoint: Boolean = false,
+        /**
+         * Stellt Fokus und Belichtung auf den Punkt ([x], [y]) ein, normiert auf 0..1 im
+         * Vorschau-Rahmen, so wie der Nutzer ihn sieht (bei der Frontkamera also gespiegelt
+         * — das Umrechnen ist Sache der Plattform). Der Punkt bleibt eingerastet, bis
+         * [resetFocus] oder ein neuer Punkt kommt. [onResult] meldet, ob scharfgestellt
+         * werden konnte; ohne Autofokus (viele Frontkameras) ist das `false`, die Belichtung
+         * gilt trotzdem.
+         */
+        val focusAt: (x: Float, y: Float, onResult: (focused: Boolean) -> Unit) -> Unit = { _, _, _ -> },
+        /** Zurueck zu Fokus und Belichtung ueber das ganze Bild. */
+        val resetFocus: () -> Unit = {},
     ) : CameraState
 
     /** Kamera konnte nicht gestartet werden (kein Geraet, belegt, Treiberfehler, ...). */

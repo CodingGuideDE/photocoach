@@ -3,6 +3,9 @@ package com.florianhaeglsperger.photocoach.domain.scoring
 import com.florianhaeglsperger.photocoach.domain.CENTER
 import com.florianhaeglsperger.photocoach.domain.faceAt
 import com.florianhaeglsperger.photocoach.domain.frame
+import com.florianhaeglsperger.photocoach.domain.structure
+import com.florianhaeglsperger.photocoach.domain.TEXTURED
+import com.florianhaeglsperger.photocoach.domain.SMOOTH
 import com.florianhaeglsperger.photocoach.domain.rules.ThirdsTargetTracker
 import com.florianhaeglsperger.photocoach.domain.subjectAt
 import kotlin.test.Test
@@ -90,11 +93,10 @@ class CompositionScorerTest {
 
     @Test
     fun `tote Flaeche ohne Motiv wird gemeldet`() {
-        // Viele gleich starke Punkte unten verteilt: kein einzelnes Motiv, oben leer.
-        val saliency = (0..8).map { subjectAt(0.1f + it * 0.1f, 0.8f) } +
-            (0..8).map { subjectAt(0.1f + it * 0.1f, 0.9f) }
-
-        val result = CompositionScorer().assess(frame(tiltDegrees = 0f, saliency = saliency))
+        // Struktur nur unten, darueber glatter Himmel — und kein einzelnes Motiv.
+        val result = CompositionScorer().assess(
+            frame(tiltDegrees = 0f, structure = structure { _, row -> if (row >= 6) TEXTURED else SMOOTH }),
+        )
 
         assertEquals("Obere Bildhälfte fast leer — Kamera etwas nach unten schwenken.", hintOf(result))
         assertNotNull(result.score)

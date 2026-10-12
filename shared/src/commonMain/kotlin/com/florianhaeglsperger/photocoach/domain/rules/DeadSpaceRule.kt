@@ -3,21 +3,31 @@ package com.florianhaeglsperger.photocoach.domain.rules
 import com.florianhaeglsperger.photocoach.domain.geometry.THIRD_HIGH
 import com.florianhaeglsperger.photocoach.domain.geometry.THIRD_LOW
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
-import com.florianhaeglsperger.photocoach.domain.model.SaliencyPoint
+import com.florianhaeglsperger.photocoach.domain.model.StructureGrid
 import com.florianhaeglsperger.photocoach.domain.subject.DefaultSubjectResolver
 import com.florianhaeglsperger.photocoach.domain.subject.SubjectResolver
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Warnt vor toter Flaeche (Plan 3.2): eine Bildhaelfte, in der praktisch nichts passiert,
- * ohne dass es dafuer einen erkennbaren Grund gibt.
+ * Warnt vor toter Flaeche (Plan 3.2): eine Bildhaelfte, in der praktisch nichts ist, ohne
+ * dass es dafuer einen erkennbaren Grund gibt.
  *
  * ## Was gemessen wird
  *
- * Plan-Wortlaut: "Anteil des Bilds ohne Saliency pro Bildhaelfte vergleichen". Gemessen wird
- * der Anteil des gesamten Saliency-Gewichts, der in jeder Haelfte liegt — links/rechts und
- * oben/unten. Haelt die leerere Haelfte weniger als [EMPTY_SHARE], ist sie "tot".
+ * Fuer jede Bildhaelfte (links/rechts, oben/unten), welcher Anteil ihrer Rasterzellen
+ * **Bildstruktur** traegt — Kanten, Textur, Details ([FrameAnalysis.structure], ab
+ * [STRUCTURE_THRESHOLD]). Ist das in einer Haelfte weniger als [EMPTY_COVERAGE], waehrend
+ * die andere deutlich belegt ist, ist sie "tot": blanker Himmel, glatte Wand.
+ *
+ * **Warum nicht mehr ueber die Saliency (bis 08.10.2026):** Saliency misst, was am
+ * staerksten *hervorsticht*, normiert aufs Maximum. Bei Kontrast-Aufnahmen mit etwas im
+ * Vordergrund drueckte der harte Kontrast jede schwaechere Struktur unter die Schwelle — eine
+ * strukturierte Mauer neben einem hellen Objekt galt als leer, und die Regel meldete
+ * "Bildhaelfte fast leer". Ausserdem markiert die Saliency bei grossen Objekten nur die
+ * Konturen, deren Inneres zaehlte als leer. Struktur wird dagegen absolut und je Zelle
+ * gemessen: was eine Haelfte enthaelt, haengt nicht davon ab, wie auffaellig die andere ist.
  *
  * ## Der erkennbare Grund
  *
@@ -29,24 +39,39 @@ import kotlin.math.min
  *
  * Der Plan nennt als zweiten Grund die **Blickrichtung** (Platz vor dem Gesicht). Die ist
  * noch nicht verfuegbar (siehe [PortraitFramingRule]); ein Gesicht auf dem Drittel ist
- * ueber den ersten Grund aber bereits abgedeckt.
- *
- * ## Wofuer die Regel damit eigentlich da ist
- *
- * Fuer Szenen **ohne** einzelnes Hauptmotiv — Landschaft, Strasse, mehrere Objekte —, bei
- * denen [RuleOfThirdsRule] mangels Motiv schweigt. Klassischer Fall: alles Interessante in
- * der unteren Bildhaelfte, darueber leerer, strukturloser Himmel.
+ * ueber den ersten Grund aber bereits abgedeckt. Gewollter Negativraum (Minimalismus) wird
+ * noch nicht als Grund erkannt — siehe CLAUDE.md.
  */
 object DeadSpaceRule : ScoredRule {
 
-    /** Haelt eine Haelfte weniger als diesen Anteil des Saliency-Gewichts, gilt sie als leer. */
-    const val EMPTY_SHARE = 0.1f
+    /**
+     * Ab diesem lokalen Kontrast traegt eine Zelle Struktur.
+     *
+     * Gemessen (siehe `ImageStructure`): glatter Himmelsverlauf mit Sensorrauschen ~0,010-0,015,
+     * sehr schwache Textur ~0,03, deutliche Textur (Mauer, Laub) ~0,08, Holzwand im
+     * Emulator-Foto 0,05-0,25, Kanten von Objekten ab ~0,2. 0,03 liegt mit Faktor 2 ueber
+     * dem glatten Himmel.
+     */
+    const val STRUCTURE_THRESHOLD = 0.03f
+
+    /** Traegt eine Haelfte in weniger als diesem Anteil ihrer Zellen Struktur, ist sie leer. */
+    const val EMPTY_COVERAGE = 0.1f
 
     /**
-     * Ab diesem Anteil gilt eine Haelfte fuer den Score als ausreichend belegt (Score 1).
-     * Dazwischen faellt der Score weich ab.
+     * So viel muss die *andere* Haelfte mindestens enthalten, damit von einer Asymmetrie die
+     * Rede sein kann. Sind beide fast leer (Nebel, weisse Wand), ist das kein
+     * Kompositionsfehler einer Haelfte.
      */
-    private const val COMFORT_SHARE = 0.3f
+    const val MIN_CONTENT_COVERAGE = 0.25f
+
+    /**
+     * Unter diesem Anteil strukturierter Zellen im ganzen Bild hat die Regel keine Meinung —
+     * ein strukturloses Bild hat keine "tote Haelfte", es ist insgesamt leer.
+     */
+    const val MIN_TOTAL_COVERAGE = 0.05f
+
+    /** Ab dieser Belegung gilt eine Haelfte fuer den Score als voll (Score 1). */
+    private const val COMFORT_COVERAGE = 0.3f
 
     /** Score einer voellig leeren, unbegruendeten Haelfte — schlecht, aber kein Totalausfall. */
     private const val MIN_SCORE = 0.3f
@@ -58,29 +83,21 @@ object DeadSpaceRule : ScoredRule {
      */
     const val THIRDS_BAND = 0.1f
 
-    /**
-     * Mindestanzahl Saliency-Punkte, damit die Regel eine Meinung hat. Ein oder zwei
-     * Rasterzellen sind ein einzelnes kleines Detail — das ist Sache der Drittel-Regel,
-     * nicht eine Aussage ueber die Verteilung im Bild.
-     */
-    const val MIN_POINTS = 3
-
     private val resolver: SubjectResolver = DefaultSubjectResolver
 
     override fun assess(analysis: FrameAnalysis): RuleAssessment? {
-        val points = analysis.saliencyRegions
-        if (points.size < MIN_POINTS) return null
-        val total = points.sumOf { it.weight.toDouble() }.toFloat()
-        if (total <= 0f) return null
+        val structure = analysis.structure ?: return null
+        if (structure.coverage { _, _ -> true } < MIN_TOTAL_COVERAGE) return null
 
         val subject = resolver.resolve(analysis)
-
         val horizontal = axis(
-            leftOrTopShare = share(points, total) { it.x },
+            first = structure.coverage { column, _ -> column < structure.columns / 2 },
+            second = structure.coverage { column, _ -> column >= structure.columns / 2 },
             subjectCoordinate = subject?.x,
         )
         val vertical = axis(
-            leftOrTopShare = share(points, total) { it.y },
+            first = structure.coverage { _, row -> row < structure.rows / 2 },
+            second = structure.coverage { _, row -> row >= structure.rows / 2 },
             subjectCoordinate = subject?.y,
         )
 
@@ -101,40 +118,38 @@ object DeadSpaceRule : ScoredRule {
         return RuleAssessment(score = worst.score, hint = hint)
     }
 
-    /**
-     * Ergebnis fuer eine Achse. [emptyIsFirst] = die leerere Haelfte ist die linke bzw. obere.
-     */
+    /** Ergebnis fuer eine Achse. [emptyIsFirst] = die leerere Haelfte ist die linke bzw. obere. */
     private class Axis(val score: Float, val deadHalf: Boolean, val emptyIsFirst: Boolean)
 
-    private fun axis(leftOrTopShare: Float, subjectCoordinate: Float?): Axis {
-        val emptierShare = min(leftOrTopShare, 1f - leftOrTopShare)
-        val emptyIsFirst = leftOrTopShare < 0.5f
+    /** [first]/[second]: Strukturanteil der linken/rechten bzw. oberen/unteren Haelfte. */
+    private fun axis(first: Float, second: Float, subjectCoordinate: Float?): Axis {
+        val emptier = min(first, second)
+        val fuller = max(first, second)
+        val emptyIsFirst = first < second
 
+        // Keine Asymmetrie, wenn auch die vollere Haelfte kaum etwas enthaelt.
+        val asymmetric = fuller >= MIN_CONTENT_COVERAGE
         val justified = subjectCoordinate != null && isNearThirdsLine(subjectCoordinate)
-        if (justified) return Axis(score = 1f, deadHalf = false, emptyIsFirst = emptyIsFirst)
+        if (!asymmetric || justified) return Axis(score = 1f, deadHalf = false, emptyIsFirst = emptyIsFirst)
 
-        val score = MIN_SCORE + (1f - MIN_SCORE) * smoothstep(0f, COMFORT_SHARE, emptierShare)
-        return Axis(score = score, deadHalf = emptierShare < EMPTY_SHARE, emptyIsFirst = emptyIsFirst)
+        val score = MIN_SCORE + (1f - MIN_SCORE) * smoothstep(0f, COMFORT_COVERAGE, emptier)
+        return Axis(score = score, deadHalf = emptier < EMPTY_COVERAGE, emptyIsFirst = emptyIsFirst)
     }
 
     private fun isNearThirdsLine(coordinate: Float): Boolean =
         abs(coordinate - THIRD_LOW) <= THIRDS_BAND || abs(coordinate - THIRD_HIGH) <= THIRDS_BAND
 
-    /**
-     * Anteil des Gewichts in der linken bzw. oberen Haelfte. Ein Punkt genau auf der Mitte
-     * zaehlt je zur Haelfte auf beide Seiten — sonst entschiede eine Rundung ueber "leer".
-     */
-    private fun share(points: List<SaliencyPoint>, total: Float, coordinate: (SaliencyPoint) -> Float): Float {
-        var first = 0.0
-        for (point in points) {
-            val c = coordinate(point)
-            first += when {
-                c < 0.5f -> point.weight.toDouble()
-                c == 0.5f -> point.weight / 2.0
-                else -> 0.0
+    /** Anteil der Zellen, die [inHalf] auswaehlt und die Struktur tragen. */
+    private fun StructureGrid.coverage(inHalf: (column: Int, row: Int) -> Boolean): Float {
+        var cells = 0
+        var structured = 0
+        for (row in 0 until rows) {
+            for (column in 0 until columns) {
+                if (!inHalf(column, row)) continue
+                cells++
+                if (this[column, row] >= STRUCTURE_THRESHOLD) structured++
             }
         }
-        return (first / total).toFloat()
+        return if (cells == 0) 0f else structured.toFloat() / cells
     }
 }
-

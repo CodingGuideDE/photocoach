@@ -1,5 +1,7 @@
 package com.florianhaeglsperger.photocoach.capture
 
+import androidx.compose.ui.graphics.ImageBitmap
+import com.florianhaeglsperger.photocoach.capture.saliency.SpectralResidualSaliency
 import com.florianhaeglsperger.photocoach.domain.model.FaceRect
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 import com.florianhaeglsperger.photocoach.domain.model.SaliencyPoint
@@ -108,6 +110,25 @@ actual class FrameAnalyzer actual constructor() {
             faces = faceRequest.readFaces(),
             timestampMs = frame.timestampMs,
             aspectRatio = aspectRatio,
+        )
+    }
+
+    /**
+     * iOS ist pausiert (CLAUDE.md), und `PhotoLibrary` liefert dort noch keine Fotos — diese
+     * Methode wird also derzeit nie aufgerufen. Damit sie trotzdem etwas Sinnvolles tut:
+     * Saliency ueber denselben modellfreien Weg wie Android (plattformneutral), Gesichter
+     * leer. Beim Wiederaufnehmen hier auf Vision umstellen, wie in [analyze].
+     */
+    actual fun analyzeStill(image: ImageBitmap): FrameAnalysis {
+        val pixels = IntArray(image.width * image.height).also { image.readPixels(it) }
+        val luma = lumaGridFromArgb(pixels, image.width, image.height, SpectralResidualSaliency.INPUT_SIZE)
+        return FrameAnalysis(
+            horizonTiltDegrees = null,
+            saliencyRegions = SpectralResidualSaliency.analyze(luma),
+            faces = emptyList(),
+            timestampMs = 0L,
+            aspectRatio = image.width.toFloat() / image.height.toFloat(),
+            structure = ImageStructure.of(luma),
         )
     }
 

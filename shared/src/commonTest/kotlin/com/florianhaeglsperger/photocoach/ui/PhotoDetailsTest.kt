@@ -46,39 +46,61 @@ class PhotoDetailsTest {
         assertEquals("1,5", formatDecimal(1.50, 2))
     }
 
+    private val sample = PhotoDetails(
+        takenDate = "Dienstag, 6. Oktober 2026",
+        takenTime = "20:37",
+        widthPx = 960,
+        heightPx = 1280,
+        sizeBytes = 197_894,
+        exposureTimeSeconds = 0.01,
+        fNumber = 4.0,
+        iso = 200,
+        flashFired = false,
+        device = "Google Pixel 8",
+        fileName = "PhotoCoach_20261006_203715.jpg",
+        album = "Pictures/PhotoCoach",
+    )
+
     @Test
-    fun rowsSkipMissingValuesAndKeepOrder() {
-        val details = PhotoDetails(
-            takenAt = "6. Okt. 2026, 20:37",
-            widthPx = 960,
-            heightPx = 1280,
-            exposureTimeSeconds = 0.01,
-            iso = 200,
-            flashFired = false,
-            fileName = "PhotoCoach_20261006_203715.jpg",
-            album = "Pictures/PhotoCoach",
-        )
+    fun exposureTilesInCameraOrderAndSkipMissing() {
+        // Brennweite fehlt hier — die Kachel faellt weg, statt "—" zu zeigen.
         assertEquals(
-            listOf(
-                "Aufgenommen" to "6. Okt. 2026, 20:37",
-                "Auflösung" to "960 × 1280 · 1,2 MP",
-                "Belichtungszeit" to "1/100 s",
-                "ISO" to "200",
-                "Blitz" to "Aus",
-                "Datei" to "Pictures/PhotoCoach/PhotoCoach_20261006_203715.jpg",
-            ),
-            details.rows(),
+            listOf("f/4" to "Blende", "1/100 s" to "Belichtung", "200" to "ISO"),
+            sample.exposureTiles(),
         )
     }
 
     @Test
-    fun emptyDetailsHaveNoRows() {
-        assertEquals(emptyList(), PhotoDetails().rows())
+    fun detailRowsSkipMissingValuesAndKeepOrder() {
+        // Weissabgleich fehlt hier.
+        assertEquals(
+            listOf(
+                "Auflösung" to "960 × 1280 · 1,2 MP",
+                "Dateigröße" to "198 KB",
+                "Blitz" to "Aus",
+            ),
+            sample.detailRows(),
+        )
+    }
+
+    @Test
+    fun subtitleJoinsTimeAndDevice() {
+        assertEquals("20:37 · Google Pixel 8", sample.subtitle())
+        assertEquals("Google Pixel 8", sample.copy(takenTime = null).subtitle())
+        assertEquals(null, PhotoDetails().subtitle())
+    }
+
+    @Test
+    fun emptyDetailsHaveNothingToShow() {
+        assertEquals(emptyList(), PhotoDetails().exposureTiles())
+        assertEquals(emptyList(), PhotoDetails().detailRows())
     }
 
     @Test
     fun zeroValuesFromIncompleteExifAreHidden() {
         // Manche Kameras schreiben 0 statt das Feld wegzulassen.
-        assertEquals(emptyList(), PhotoDetails(iso = 0, fNumber = 0.0, widthPx = 0, heightPx = 0).rows())
+        val zeros = PhotoDetails(iso = 0, fNumber = 0.0, widthPx = 0, heightPx = 0, exposureTimeSeconds = 0.0)
+        assertEquals(emptyList(), zeros.exposureTiles())
+        assertEquals(emptyList(), zeros.detailRows())
     }
 }

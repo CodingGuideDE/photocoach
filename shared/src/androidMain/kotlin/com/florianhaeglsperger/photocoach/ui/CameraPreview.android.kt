@@ -13,10 +13,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.SurfaceOrientedMeteringPointFactory
 import androidx.camera.core.ZoomState
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
@@ -353,6 +355,41 @@ actual fun CameraPreview(
                         }
                     }
 
+                    // Tippen zum Scharfstellen: Fokus, Belichtung und Weissabgleich messen am
+                    // angetippten Punkt. Die MeteringPointFactory der PreviewView rechnet
+                    // Bildschirm- in Sensorkoordinaten um — inklusive Drehung, FIT_CENTER und
+                    // Spiegelung der Frontkamera; das muss hier also niemand von Hand tun.
+                    val focusFlags = FocusMeteringAction.FLAG_AF or
+                        FocusMeteringAction.FLAG_AE or
+                        FocusMeteringAction.FLAG_AWB
+                    val canFocusAtPoint = camera.cameraInfo.isFocusMeteringSupported(
+                        FocusMeteringAction.Builder(
+                            SurfaceOrientedMeteringPointFactory(1f, 1f).createPoint(0.5f, 0.5f),
+                            focusFlags,
+                        ).build(),
+                    )
+                    val focusAt: (Float, Float, (Boolean) -> Unit) -> Unit = { x, y, onResult ->
+                        val point = previewView.meteringPointFactory
+                            .createPoint(x * previewView.width, y * previewView.height)
+                        // Ohne Auto-Cancel: der Punkt bleibt, bis der Nutzer einen neuen
+                        // antippt oder zuruecksetzt. CameraX wuerde sonst nach 5 s wieder
+                        // ueber das ganze Bild messen — und eine am Punkt eingestellte
+                        // Belichtungskorrektur bezoege sich ploetzlich auf etwas anderes.
+                        val action = FocusMeteringAction.Builder(point, focusFlags)
+                            .disableAutoCancel()
+                            .build()
+                        val future = camera.cameraControl.startFocusAndMetering(action)
+                        future.addListener(
+                            {
+                                // Scheitert, wenn ein neuer Tipp den alten abloest — gewollt.
+                                val focused = runCatching { future.get().isFocusSuccessful }
+                                    .getOrDefault(false)
+                                onResult(focused)
+                            },
+                            ContextCompat.getMainExecutor(context),
+                        )
+                    }
+
                     cameraState = CameraState.Running(
                         takePhoto = { onResult ->
                             imageCapture.saveToGallery(context, onResult)
@@ -365,6 +402,9 @@ actual fun CameraPreview(
                         manualCapabilities = manualCapabilities,
                         manualSettings = ManualSettings(),
                         setManualSettings = setManualSettings,
+                        canFocusAtPoint = canFocusAtPoint,
+                        focusAt = focusAt,
+                        resetFocus = { camera.cameraControl.cancelFocusAndMetering() },
                     )
 
                     // Jede Zoom-Aenderung (Button, Pinch) kommt hierueber zurueck und wird

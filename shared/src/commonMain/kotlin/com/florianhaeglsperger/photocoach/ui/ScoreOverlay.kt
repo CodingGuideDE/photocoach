@@ -5,6 +5,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,6 +27,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.florianhaeglsperger.photocoach.domain.scoring.Verdict
@@ -49,11 +53,16 @@ fun Verdict.displayText(): String = when (this) {
 }
 
 /**
- * Live-Feedback zur Komposition (Plan 3.4): Score 0-100 plus *ein* Satz.
+ * Live-Feedback zur Komposition (Plan 3.4): Score 0-100 plus *ein* Hinweis.
  *
- * Bewusst eine schmale Leiste am oberen Bildrand statt eines Overlays ueber dem Motiv:
+ * Bewusst eine schmale Karte am oberen Bildrand statt eines Overlays ueber dem Motiv:
  * der Sucher soll frei bleiben — man fotografiert das Bild, nicht die App. Immer nur *ein*
  * Hinweis, ausgewaehlt vom `CompositionScorer`.
+ *
+ * **Zwei Zeilen mit fester Rolle statt eines umbrechenden Satzes:** oben *was* nicht stimmt
+ * (fett, in der Zustandsfarbe), darunter *was zu tun ist* (gedaempft). Vorher brach der
+ * lange Satz irgendwo mitten im Text um, und die Karte sprang zwischen ein- und
+ * zweizeiligen Zustaenden. Die Mindesthoehe haelt die Karte ruhig.
  *
  * Drei Zustaende, nicht zwei: "Hinweis" (orange), "passt" (gruen) und "kein Motiv"
  * (neutral grau). Den dritten gab es frueher nicht — dann stand "Komposition passt", sobald
@@ -61,22 +70,34 @@ fun Verdict.displayText(): String = when (this) {
  *
  * [score] fehlt (`null`) genau im Zustand "kein Motiv": eine Zahl ohne Grundlage waere
  * dieselbe Falschaussage wie das falsche Lob.
+ *
+ * [onClick] ist fuer das Diagnose-Badge (Rohdaten ein-/ausblenden), kein Nutzerfeature.
  */
 @Composable
 fun ScoreOverlay(
     verdict: Verdict,
     score: Int?,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
+    val (headline, action) = splitHint(verdict.displayText())
+    val color = when (verdict) {
+        is Verdict.Fix -> HINT_COLOR
+        Verdict.Good -> OK_COLOR
+        Verdict.NoSubject -> NEUTRAL_COLOR
+    }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.Black.copy(alpha = 0.55f))
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black.copy(alpha = 0.6f))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .heightIn(min = MIN_HEIGHT)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (score != null) ScoreBadge(score)
         StatusIcon(verdict)
@@ -84,18 +105,46 @@ fun ScoreOverlay(
         // AnimatedVisibility waere hier falsch: der Text soll sich *austauschen*, nicht
         // ein- und ausblenden. Die Daempfung gegen Flackern passiert eine Ebene hoeher
         // in VerdictStabilizer, nicht durch eine Animation.
-        Text(
-            text = verdict.displayText(),
-            color = when (verdict) {
-                is Verdict.Fix -> HINT_COLOR
-                Verdict.Good -> OK_COLOR
-                Verdict.NoSubject -> NEUTRAL_COLOR
-            },
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = headline,
+                color = color,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (action != null) {
+                Text(
+                    text = action,
+                    color = Color.White.copy(alpha = 0.75f),
+                    fontSize = 13.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
+
+/** Mindesthoehe der Karte: zwei Textzeilen plus Rand, damit sie nicht zwischen Zustaenden springt. */
+private val MIN_HEIGHT = 64.dp
+
+/**
+ * Teilt einen Hinweis in "was stimmt nicht" und "was tun".
+ *
+ * Alle Regeln liefern ihre Hinweise als "Problem — Handlung." (siehe `domain/rules`); ohne
+ * Trenner (z.B. "Komposition passt") gibt es nur die erste Zeile. Reine Darstellung —
+ * die Regeltexte selbst bleiben ein Satz, damit Feldtest-Protokoll und Tests unveraendert
+ * bleiben.
+ */
+internal fun splitHint(message: String): Pair<String, String?> {
+    val index = message.indexOf(HINT_SEPARATOR)
+    if (index < 0) return message to null
+    return message.substring(0, index) to message.substring(index + HINT_SEPARATOR.length)
+}
+
+private const val HINT_SEPARATOR = " — "
 
 /** Die Zahl, eingefaerbt nach Guete. Feste Breite, damit der Text daneben nicht springt. */
 @Composable

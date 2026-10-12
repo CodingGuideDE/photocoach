@@ -32,7 +32,38 @@ data class FrameAnalysis(
      * vertikale Abweichungen systematisch zu milde (siehe `distanceInWidths`).
      */
     val aspectRatio: Float,
+    /**
+     * Wie viel Bildstruktur (lokaler Kontrast) in jedem Bereich steckt — die Antwort auf
+     * "ist hier ueberhaupt etwas?", die `DeadSpaceRule` braucht. `null`, wenn die Plattform
+     * sie nicht liefert; dann hat die Regel keine Meinung.
+     *
+     * Bewusst getrennt von [saliencyRegions]: Saliency beantwortet "was sticht am staerksten
+     * hervor?" und ist aufs Maximum normiert. Ein harter Kontrast im Vordergrund drueckt dort
+     * jede schwaechere Struktur unter die Schwelle — eine strukturierte Mauer galt dann als
+     * leer. Struktur wird absolut gemessen und kennt dieses Problem nicht.
+     */
+    val structure: StructureGrid? = null,
 )
+
+/**
+ * Lokaler Kontrast je Rasterzelle, zeilenweise (Index = Zeile * [columns] + Spalte), Zeile 0
+ * oben. Werte sind helligkeitsunabhaengig (mittlerer Helligkeitsgradient geteilt durch die
+ * Helligkeit der Zelle), damit eine dunkle Szene nicht allein deshalb "leer" wirkt.
+ */
+data class StructureGrid(val columns: Int, val rows: Int, val values: List<Float>) {
+    init {
+        require(values.size == columns * rows) { "values.size passt nicht zu $columns x $rows" }
+    }
+
+    operator fun get(column: Int, row: Int): Float = values[row * columns + column]
+
+    /** Siehe [FaceRect.mirroredHorizontally] — fuer die gespiegelte Frontkamera-Vorschau. */
+    fun mirroredHorizontally(): StructureGrid = StructureGrid(
+        columns,
+        rows,
+        List(values.size) { i -> values[(i / columns) * columns + (columns - 1 - i % columns)] },
+    )
+}
 
 /** Normalisierter Punkt (0.0–1.0) im Kamerabild mit Aufmerksamkeits-Gewicht. */
 data class SaliencyPoint(

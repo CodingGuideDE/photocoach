@@ -5,15 +5,19 @@ import kotlin.math.roundToLong
 /**
  * Aufnahmedaten eines Fotos, wie die [PhotoLibrary] der Plattform sie liefert.
  *
- * Rohwerte statt fertiger Texte — die Formatierung ([rows]) liegt hier in commonMain und ist
- * damit auf allen Plattformen gleich und ohne Geraet testbar. Ausnahme ist [takenAt]: Datum
- * und Uhrzeit formatiert die Plattform, weil das Sache der Spracheinstellung des Geraets ist
- * (wie [CaptureResult.Success.location], nur zum Anzeigen).
+ * Rohwerte statt fertiger Texte — die Formatierung ([exposureTiles], [detailRows]) liegt hier
+ * in commonMain und ist damit auf allen Plattformen gleich und ohne Geraet testbar. Ausnahme
+ * sind [takenDate] und [takenTime]: Datum und Uhrzeit formatiert die Plattform, weil das Sache
+ * der Spracheinstellung des Geraets ist (wie [CaptureResult.Success.location], nur zum
+ * Anzeigen).
  *
  * Jedes Feld kann fehlen — je nach Geraet schreibt die Kamera nicht alle EXIF-Werte.
  */
 data class PhotoDetails(
-    val takenAt: String? = null,
+    /** Langes Datum, z. B. "Dienstag, 6. Oktober 2026" — die Ueberschrift der Info. */
+    val takenDate: String? = null,
+    /** Uhrzeit, z. B. "20:37". */
+    val takenTime: String? = null,
     val fileName: String? = null,
     val album: String? = null,
     /** Breite und Hoehe so, wie das Foto angezeigt wird (EXIF-Drehung schon beruecksichtigt). */
@@ -31,24 +35,32 @@ data class PhotoDetails(
 )
 
 /**
- * Die anzeigbaren Zeilen der Info-Ansicht, in fester Reihenfolge: erst *wann/was*, dann die
- * Belichtung. Fehlende Werte erscheinen gar nicht — eine Zeile "ISO: —" hilft niemandem.
+ * Die vier Belichtungswerte als Kacheln (Wert, Bezeichnung) — das, was Fotografen auf einen
+ * Blick sehen wollen, in der ueblichen Reihenfolge von Kamera-Apps. Fehlende fallen weg.
  */
-internal fun PhotoDetails.rows(): List<Pair<String, String>> = buildList {
-    takenAt?.let { add("Aufgenommen" to it) }
+internal fun PhotoDetails.exposureTiles(): List<Pair<String, String>> = buildList {
+    fNumber?.takeIf { it > 0 }?.let { add(formatAperture(it) to "Blende") }
+    exposureTimeSeconds?.takeIf { it > 0 }?.let { add(formatExposureTime(it) to "Belichtung") }
+    iso?.takeIf { it > 0 }?.let { add(it.toString() to "ISO") }
+    focalLengthMm?.takeIf { it > 0 }?.let { add("${formatDecimal(it, 1)} mm" to "Brennweite") }
+}
+
+/**
+ * Die uebrigen Angaben als Zeilen (Bezeichnung, Wert) unter den Kacheln. Fehlende Werte
+ * erscheinen gar nicht — eine Zeile "Blitz: —" hilft niemandem.
+ */
+internal fun PhotoDetails.detailRows(): List<Pair<String, String>> = buildList {
     if (widthPx != null && heightPx != null && widthPx > 0 && heightPx > 0) {
         add("Auflösung" to formatResolution(widthPx, heightPx))
     }
     sizeBytes?.takeIf { it > 0 }?.let { add("Dateigröße" to formatFileSize(it)) }
-    exposureTimeSeconds?.takeIf { it > 0 }?.let { add("Belichtungszeit" to formatExposureTime(it)) }
-    fNumber?.takeIf { it > 0 }?.let { add("Blende" to formatAperture(it)) }
-    iso?.takeIf { it > 0 }?.let { add("ISO" to it.toString()) }
-    focalLengthMm?.takeIf { it > 0 }?.let { add("Brennweite" to "${formatDecimal(it, 1)} mm") }
     whiteBalanceManual?.let { add("Weißabgleich" to if (it) "Manuell" else "Automatisch") }
     flashFired?.let { add("Blitz" to if (it) "Ausgelöst" else "Aus") }
-    device?.let { add("Kamera" to it) }
-    if (fileName != null) add("Datei" to if (album != null) "$album/$fileName" else fileName)
 }
+
+/** Unterzeile unter dem Datum: "20:37 · Google Pixel 8" — was davon da ist. */
+internal fun PhotoDetails.subtitle(): String? =
+    listOfNotNull(takenTime, device).joinToString(" · ").takeIf { it.isNotEmpty() }
 
 /** "4032 × 3024 · 12,2 MP" */
 internal fun formatResolution(width: Int, height: Int): String {

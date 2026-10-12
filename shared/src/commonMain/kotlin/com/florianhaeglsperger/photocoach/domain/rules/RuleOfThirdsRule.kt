@@ -42,10 +42,14 @@ data class ThirdsEvaluation(
  * platziert". Ein Motiv genau in der Bildmitte liefert dagegen sehr wohl ein Ergebnis
  * (Score 0) — die Mitte ist eine bewusste Bildsprache, aber eben keine Drittel-Komposition.
  *
- * **Kamerafuehrung im Hinweistext:** wie bei [PortraitFramingRule] als Kamera-Aktion
- * formuliert und damit *entgegengesetzt* zum Versatz: Sitzt das Motiv zu weit links im
- * Bild, muss die Kamera nach links schwenken, damit der Bildinhalt relativ dazu nach rechts
- * wandert.
+ * **Hinweistext beschreibt nur das Motiv, ohne Kamera-Anweisung und ohne Prozent**
+ * ("Motiv etwas zu hoch", "Motiv viel zu weit links"). Bis 10.10.2026 stand dort
+ * "Motiv ca. 17 % zu weit oben — Kamera etwas nach oben schwenken". Das war physikalisch
+ * richtig (Kamera hoch → Bildinhalt wandert nach unten), wurde aber beim kurzen Blick als
+ * Widerspruch gelesen ("oben … oben"), und eine Prozentzahl sagt beim Fotografieren nichts
+ * darueber, wie weit man die Kamera bewegen muss. "Etwas"/"viel" ([LARGE_OFFSET_PERCENT])
+ * transportiert genau das. Die Richtung der Kamera ergibt sich aus dem Sucher von selbst;
+ * ein Pfeil dafuer ist Plan-Phase 4.
  */
 object RuleOfThirdsRule : ScoredRule {
 
@@ -57,6 +61,15 @@ object RuleOfThirdsRule : ScoredRule {
      * die eigene Messungenauigkeit als Bildfehler auszugeben.
      */
     const val MIN_OFFSET_PERCENT = 5
+
+    /**
+     * Ab diesem Versatz (Prozent der Bildbreite) heisst es "viel zu …" statt "etwas zu …".
+     *
+     * Zum Vergleich: von der Bildmitte bis zur Drittel-Linie sind es rund 17 %. Ab 12 % sitzt
+     * das Motiv also naeher an der Mitte (oder am Rand) als am Drittel — das ist eine
+     * spuerbare Kamerabewegung, keine Feinkorrektur mehr.
+     */
+    const val LARGE_OFFSET_PERCENT = 12
 
     private val resolver: SubjectResolver = DefaultSubjectResolver
 
@@ -85,19 +98,16 @@ object RuleOfThirdsRule : ScoredRule {
 
         // Nur die dominante Achse nennen: zwei Korrekturen gleichzeitig sind im Sucher
         // nicht umsetzbar, und der Rule-Contract sieht ohnehin genau einen Hinweis vor.
-        return if (abs(offsetX) >= abs(offsetY)) {
-            if (offsetX < 0) {
-                Hint("Motiv ca. ${abs(offsetX)} % zu weit links — Kamera etwas nach links schwenken.")
-            } else {
-                Hint("Motiv ca. $offsetX % zu weit rechts — Kamera etwas nach rechts schwenken.")
-            }
-        } else {
-            if (offsetY < 0) {
-                Hint("Motiv ca. ${abs(offsetY)} % zu weit oben — Kamera etwas nach oben schwenken.")
-            } else {
-                Hint("Motiv ca. $offsetY % zu weit unten — Kamera etwas nach unten schwenken.")
-            }
+        val horizontal = abs(offsetX) >= abs(offsetY)
+        val offset = if (horizontal) offsetX else offsetY
+        val amount = if (abs(offset) >= LARGE_OFFSET_PERCENT) "viel" else "etwas"
+        val direction = when {
+            horizontal && offset < 0 -> "zu weit links"
+            horizontal -> "zu weit rechts"
+            offset < 0 -> "zu hoch"
+            else -> "zu tief"
         }
+        return Hint("Motiv $amount $direction")
     }
 
     /** Die volle Bewertung, oder `null`, wenn kein Motiv erkennbar ist. */

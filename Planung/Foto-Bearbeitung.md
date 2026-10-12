@@ -34,13 +34,14 @@ auslieferbar. Die Aufwände sind grobe Schätzungen in Arbeitstagen.
 
 | Feature | Inhalt | Stand |
 |---|---|---|
-| **Löschen** | Papierkorb oben rechts, Bestätigung, danach nächstes Foto | ✅ |
+| **Löschen** | in der Aktionsleiste unten, Bestätigung, danach nächstes Foto | ✅ |
 | **Teilen** | System-Teilen-Dialog (`Intent.ACTION_SEND` mit der MediaStore-URI) | ✅ keine Berechtigung nötig |
 | **Info** | Zeit, Auflösung, Dateigröße, Belichtungszeit, Blende, ISO, Brennweite, Weißabgleich, Blitz, Kamera, Datei | ✅ aus EXIF + MediaStore |
 
-Unten sitzt die **Aktionsleiste**, derzeit mit `Teilen · Info`. „Analyse“ und
+Unten sitzt die **Aktionsleiste**, derzeit mit `Teilen · Löschen`. „Analyse“ und
 „Bearbeiten“ kommen mit Stufe B und C dazu, nicht vorher als ausgegraute Platzhalter. Oben:
-links das X, in der Mitte der Zähler, rechts der Papierkorb.
+links das X, in der Mitte der Zähler, rechts der Info-Knopf; das Info-Panel klappt darunter
+auf.
 
 **Was der Info-Ansicht noch fehlt:** Objektiv, Zoomstufe, Pro-Einstellungen im Sinne von
 „was war eingestellt“ und der Score zur Aufnahmezeit. Nichts davon steht im EXIF, es braucht
@@ -61,6 +62,12 @@ Das ist die Voraussetzung für alle Vorschläge und für sich schon ein Feature.
 
 **Definition of Done:** Score und Hinweis im Viewer stimmen mit dem überein, was der
 Sucher kurz vor der Aufnahme gezeigt hat (Gegenprobe über das `FieldLog`).
+
+**Stand 08.10.2026:** Score und Hinweis stehen im Viewer (`FrameAnalyzer.analyzeStill`,
+`CompositionScorer`, `ScoreOverlay`). Gegenprobe im Emulator: gleiches Urteil wie im
+Sucher („Komposition passt“), Score 83 statt 93. Die Differenz ist der Horizont: Er fehlt,
+bis die Sensor-Neigung mit dem Foto gespeichert wird (4.3). Die Overlays (Raster, Heatmap,
+Gesichter) und der Knopf „Analyse“ fehlen noch.
 
 ### Stufe C — Kompositions-Bearbeitung (Kern, ~8 Tage)
 

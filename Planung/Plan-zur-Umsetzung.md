@@ -426,7 +426,7 @@ Smart-Crop pro Format (Stufe C) baut die Brücke zum Story-Coach in Phase 5.
 **Stufe A — Grundfunktionen im Viewer** ✅ (06.10.2026)
 - [x] Vollbild-Ansicht, Öffnen aus der Vorschau, Zoomen, Wegwischen
 - [x] Blättern durch alle App-Fotos
-- [x] Löschen (Papierkorb oben rechts, Bestätigung, danach nächstes Foto)
+- [x] Löschen (in der Aktionsleiste unten, Bestätigung, danach nächstes Foto)
 - [x] Teilen über den System-Dialog (ohne neue Berechtigung)
 - [x] Info: Aufnahmedaten aus EXIF und MediaStore (Zeit, Auflösung, Belichtung, Blende, ISO,
       Brennweite, Weißabgleich, Blitz, Kamera, Datei)
@@ -437,9 +437,12 @@ Smart-Crop pro Format (Stufe C) baut die Brücke zum Story-Coach in Phase 5.
 - [ ] Info-Ansicht um Objektiv, Zoom und Aufnahme-Score ergänzen (stehen nicht im EXIF)
 - [ ] Entscheidung Speicherort: app-intern (empfohlen) oder XMP in der Datei
 
-**Stufe B — Kompositions-Analyse des fertigen Fotos** (~4 Tage)
-- [ ] Standbild-Einstieg in den `FrameAnalyzer` (ML Kit auf Bitmap, Spectral Residual)
-- [ ] Score und Hinweis im Viewer über den bestehenden `CompositionScorer`
+**Stufe B — Kompositions-Analyse des fertigen Fotos** (~4 Tage) — 🚧 Bewertung steht (08.10.2026)
+- [x] Standbild-Einstieg in den `FrameAnalyzer` (ML Kit auf Bitmap, Spectral Residual)
+- [x] Score und Hinweis im Viewer über den bestehenden `CompositionScorer`
+      *Lücke:* ohne Horizont — die Sensor-Neigung wird noch nicht mitgespeichert (siehe
+      Aufnahme-Metadaten oben). Der Score liegt deshalb bei geradem Horizont ~10 Punkte
+      unter dem im Sucher, bei schiefem darüber.
 - [ ] Einblendbar: Drittel-Raster, Saliency-Heatmap, erkannte Gesichter
 - [ ] Aktionsleiste um „Analyse“ erweitern
 

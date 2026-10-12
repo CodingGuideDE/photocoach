@@ -1,10 +1,10 @@
 package com.florianhaeglsperger.photocoach.ui
 
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 
 /**
  * Gemeinsamer UI-Einstiegspunkt fuer alle Plattformen. Wird von androidApp/MainActivity.kt
@@ -13,8 +13,8 @@ import androidx.compose.ui.Modifier
  */
 @Composable
 fun App() {
-    MaterialTheme {
-        Surface(modifier = Modifier.fillMaxSize()) {
+    PhotoCoachTheme {
+        Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
             CameraScreen()
         }
     }

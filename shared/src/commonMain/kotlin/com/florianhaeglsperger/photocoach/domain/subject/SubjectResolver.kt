@@ -3,6 +3,7 @@ package com.florianhaeglsperger.photocoach.domain.subject
 import com.florianhaeglsperger.photocoach.domain.model.FaceRect
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 import com.florianhaeglsperger.photocoach.domain.model.SaliencyPoint
+import kotlin.math.max
 import kotlin.math.sqrt
 
 /** Leitet aus einer [FrameAnalysis] den Motivpunkt ab, oder `null`, wenn keiner erkennbar ist. */
@@ -49,6 +50,9 @@ object DefaultSubjectResolver : SubjectResolver {
     /** Gewichtsanteil, den der staerkste Klumpen mindestens halten muss. */
     const val MIN_CLUSTER_SHARE = 0.4f
 
+    /** Kleinste halbe Kantenlaenge (normiert) des Debug-Rechtecks um einen Saliency-Klumpen. */
+    private const val MIN_BOUNDS_HALF_SIZE = 0.03f
+
     override fun resolve(analysis: FrameAnalysis): SubjectPoint? =
         resolveFromFace(analysis) ?: resolveFromSaliency(analysis)
 
@@ -63,6 +67,7 @@ object DefaultSubjectResolver : SubjectResolver {
             y = (face.top + face.bottom) / 2f,
             confidence = 1f,
             source = SubjectSource.FACE,
+            bounds = SubjectBounds(face.left, face.top, face.right, face.bottom),
         )
     }
 
@@ -89,6 +94,24 @@ object DefaultSubjectResolver : SubjectResolver {
             // Verlaesslichkeit ausmacht: wie klar sich der Klumpen vom Rest abhebt.
             confidence = share,
             source = SubjectSource.SALIENCY,
+            bounds = cluster.bounds(),
+        )
+    }
+
+    /**
+     * Huelle der Punkte, mindestens [MIN_BOUNDS_HALF_SIZE] gross: ein Klumpen aus einem
+     * einzigen Punkt waere sonst ein unsichtbares Rechteck.
+     */
+    private fun List<SaliencyPoint>.bounds(): SubjectBounds {
+        val cx = (minOf { it.x } + maxOf { it.x }) / 2f
+        val cy = (minOf { it.y } + maxOf { it.y }) / 2f
+        val halfW = max((maxOf { it.x } - minOf { it.x }) / 2f, MIN_BOUNDS_HALF_SIZE)
+        val halfH = max((maxOf { it.y } - minOf { it.y }) / 2f, MIN_BOUNDS_HALF_SIZE)
+        return SubjectBounds(
+            (cx - halfW).coerceAtLeast(0f),
+            (cy - halfH).coerceAtLeast(0f),
+            (cx + halfW).coerceAtMost(1f),
+            (cy + halfH).coerceAtMost(1f),
         )
     }
 

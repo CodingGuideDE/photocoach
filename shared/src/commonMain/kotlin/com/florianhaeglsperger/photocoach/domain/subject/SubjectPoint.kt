@@ -28,7 +28,16 @@ data class SubjectPoint(
      */
     val confidence: Float,
     val source: SubjectSource,
+    /**
+     * Ausdehnung des Motivs, nur fuer die Debug-Anzeige (Rechteck im Sucher). Bei einem
+     * Gesicht dessen Rahmen, bei Saliency die Huelle des Punkt-Klumpens — also eine grobe
+     * Schaetzung, die Regeln rechnen weiter nur mit x/y.
+     */
+    val bounds: SubjectBounds? = null,
 )
+
+/** Normiertes Rechteck (0..1, y=0 oben), das ein Motiv umschliesst. */
+data class SubjectBounds(val left: Float, val top: Float, val right: Float, val bottom: Float)
 
 /** Woraus der Motivpunkt abgeleitet wurde — fuer Debug-Anzeige und spaetere Gewichtung. */
 enum class SubjectSource {

@@ -161,9 +161,9 @@ private class AndroidPhotoLibrary(
             val takenMs = long(MediaStore.Images.Media.DATE_TAKEN)?.takeIf { it > 0 }
                 ?: long(MediaStore.Images.Media.DATE_ADDED)?.takeIf { it > 0 }?.times(1000)
             PhotoDetails(
-                takenAt = takenMs?.let {
-                    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it))
-                },
+                // Formatiert nach der Spracheinstellung des Geraets — "Dienstag, 6. Oktober 2026".
+                takenDate = takenMs?.let { DateFormat.getDateInstance(DateFormat.FULL).format(Date(it)) },
+                takenTime = takenMs?.let { DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it)) },
                 fileName = string(MediaStore.Images.Media.DISPLAY_NAME),
                 album = string(MediaStore.Images.Media.RELATIVE_PATH)?.trimEnd('/'),
                 widthPx = long(MediaStore.Images.Media.WIDTH)?.toInt()?.takeIf { it > 0 },

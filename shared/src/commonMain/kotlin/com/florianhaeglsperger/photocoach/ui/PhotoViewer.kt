@@ -1,6 +1,7 @@
 package com.florianhaeglsperger.photocoach.ui
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -29,12 +30,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,8 +59,15 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.florianhaeglsperger.photocoach.capture.FrameAnalyzer
+import com.florianhaeglsperger.photocoach.capture.STILL_ANALYSIS_MAX_DIMENSION
+import com.florianhaeglsperger.photocoach.domain.scoring.CompositionAssessment
+import com.florianhaeglsperger.photocoach.domain.scoring.CompositionScorer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -74,7 +81,48 @@ const val THUMBNAIL_MAX_DIMENSION = 256
  */
 const val FULL_MAX_DIMENSION = 4096
 
+/** Dauer des Ein-/Ausblendens der Bedienelemente per Tipp. */
+private const val CONTROLS_FADE_MS = 180
+
 private const val OPEN_DURATION_MS = 320
+
+/** Loeschen: so lange schrumpft und verblasst das Foto, so lange waechst das naechste herein. */
+private const val VANISH_OUT_MS = 220
+private const val VANISH_IN_MS = 260
+private const val VANISH_SHRINK = 0.12f
+
+/** Anheben beim Loeschen: Dauer, Abstand zum Panel, Eckenradius, Panel-Hoehe vor dem Messen. */
+private const val LIFT_MS = 260
+private val LIFT_GAP = 16.dp
+private val LIFT_TOP = 56.dp
+private val LIFT_TOP_SIDEWAYS = 32.dp
+private val LIFT_CORNER = 14.dp
+private val LIFT_SHEET_FALLBACK = 220.dp
+
+/** Wohin und wie gross das Foto beim Anheben ([liftedPlacement]). */
+internal data class LiftedPlacement(val scale: Float, val offsetX: Float, val offsetY: Float)
+
+/**
+ * Das Foto beim Loeschen-Panel so verkleinern und verschieben, dass es **ganz** in [free]
+ * steht — dem Bereich neben bzw. ueber dem Panel. Das Panel soll es nicht verdecken, darum
+ * geht es ja. Nie vergroessern (Faktor hoechstens [LIFT_MAX_SCALE]), damit auch ein Foto,
+ * das ohnehin schon passt, sichtbar "angehoben" wird.
+ */
+internal fun liftedPlacement(image: Rect, free: Rect): LiftedPlacement {
+    val scale = minOf(
+        LIFT_MAX_SCALE,
+        free.width.coerceAtLeast(1f) / image.width,
+        free.height.coerceAtLeast(1f) / image.height,
+    ).coerceAtLeast(0.2f)
+    // graphicsLayer skaliert um die Mitte des Fotos: neue Mitte = Mitte des freien Bereichs.
+    return LiftedPlacement(
+        scale = scale,
+        offsetX = free.center.x - image.center.x,
+        offsetY = free.center.y - image.center.y,
+    )
+}
+
+private const val LIFT_MAX_SCALE = 0.92f
 private const val CLOSE_DURATION_MS = 260
 
 /** Ab dieser Vergroesserung zeigt Doppeltippen wieder das ganze Bild. */
@@ -170,13 +218,21 @@ fun PhotoThumbnail(
  * waeren rund 150 MB. Bis die volle Aufloesung dekodiert ist, steht die kleinere Fassung an
  * ihrer Stelle, nichts wartet.
  *
- * **Loeschen:** Papierkorb oben rechts, nach Rueckfrage. Danach steht das naechstaeltere
+ * **Loeschen:** Papierkorb in der Aktionsleiste unten, nach Rueckfrage im
+ * [DeleteConfirmSheet]; das Foto schrumpft und verblasst, dann waechst das naechste herein. Danach steht das naechstaeltere
  * Foto da (gibt es keines, das neuere); war es das letzte, schliesst die Ansicht. Ueber
  * [onDeleted] erfaehrt der Aufrufer das neueste verbliebene Foto, damit die Vorschau im
  * Sucher nicht auf ein geloeschtes Bild zeigt.
  *
- * **Teilen und Info:** Aktionsleiste unten ([ViewerActionBar]). Info zeigt die Aufnahmedaten
- * des angezeigten Fotos ([PhotoInfoPanel]) und bleibt beim Blaettern offen.
+ * **Bewertung:** Score und Hinweis wie im Sucher ([ScoreOverlay]) ueber der Aktionsleiste —
+ * aus derselben Analyse ([FrameAnalyzer.analyzeStill]) und demselben [CompositionScorer].
+ * Ohne Horizont: dessen Neigung kommt im Sucher aus dem Lagesensor und ist im Foto nicht
+ * gespeichert.
+ *
+ * **Teilen und Info:** Teilen in der Aktionsleiste unten ([ViewerActionBar]), Info oben
+ * rechts ([InfoButton]). Info zeigt die Aufnahmedaten des angezeigten Fotos
+ * ([PhotoInfoSheet], hebt das Foto an wie die Loeschen-Rueckfrage) und bleibt beim Blaettern
+ * offen.
  *
  * **Schliessen:** X oben links, Zurueck-Taste, oder nach unten wegziehen (siehe
  * [shouldDismiss]); Wegziehen nur bei nicht vergroessertem Bild.
@@ -240,26 +296,74 @@ fun PhotoViewer(
             ?: pageImages[p]
             ?: preview.takeIf { p == photo }
 
+    // Ein Tipp aufs Bild blendet alle Bedienelemente aus (Bild pur), der naechste wieder ein.
+    var controlsVisible by remember { mutableStateOf(true) }
+    val chromeAlpha by animateFloatAsState(if (controlsVisible) 1f else 0f, tween(CONTROLS_FADE_MS))
     var confirmDelete by remember { mutableStateOf(false) }
     var deleteFailed by remember { mutableStateOf(false) }
     var shareFailed by remember { mutableStateOf(false) }
 
-    // Info-Panel: bleibt beim Blaettern offen und laedt dann die Daten des neuen Fotos.
+    // Info-Panel ([PhotoInfoSheet]): bleibt beim Blaettern offen und laedt dann die Daten
+    // des neuen Fotos.
     var infoOpen by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf<Pair<CapturedPhoto, PhotoDetails?>?>(null) }
     LaunchedEffect(current, infoOpen) {
         if (infoOpen && details?.first != current) details = current to library.details(current)
     }
+    // Bewertung wie im Sucher: dieselbe FrameAnalysis, derselbe CompositionScorer, dasselbe
+    // ScoreOverlay. Pro Foto einmal gerechnet und gemerkt — beim Zurueckblaettern steht sie
+    // sofort. Schluessel fehlt = laeuft noch; Wert null = Foto nicht lesbar, keine Leiste.
+    val analyzer = remember { FrameAnalyzer() }
+    DisposableEffect(analyzer) { onDispose { analyzer.close() } }
+    val assessments = remember { mutableStateMapOf<CapturedPhoto, CompositionAssessment?>() }
+    LaunchedEffect(current) {
+        val photoToRate = current
+        if (photoToRate in assessments) return@LaunchedEffect
+        val image = library.load(photoToRate, STILL_ANALYSIS_MAX_DIMENSION)
+        assessments[photoToRate] = image?.let {
+            // Eigener Scorer pro Foto: der im Sucher haelt Zustand ueber Frames (Drittel-
+            // Hysterese), den es zwischen zwei unabhaengigen Fotos nicht geben darf.
+            withContext(Dispatchers.Default) { CompositionScorer().assess(analyzer.analyzeStill(it)) }
+        }
+    }
+
     var closeAfterDelete by remember { mutableStateOf(false) }
+    // 0 = Foto steht normal, 1 = verschwunden. Traegt das Ausblenden beim Loeschen.
+    val vanish = remember { Animatable(0f) }
+    // 0 = Foto an seinem Platz, 1 = "angehoben": verkleinert ueber dem Loeschen-Panel. So
+    // steht das Foto, um das es geht, ganz sichtbar ueber der Frage — und das Loeschen
+    // setzt genau diese Bewegung fort (weiter schrumpfen, verblassen).
+    val lift = remember { Animatable(0f) }
+    var deleting by remember { mutableStateOf(false) }
+    var sheetSize by remember { mutableStateOf(IntSize.Zero) }
+    // Beide Panels (Loeschen, Info) heben das Foto auf dieselbe Weise an.
+    val sheetOpen = confirmDelete || infoOpen
+    LaunchedEffect(sheetOpen) {
+        if (sheetOpen) {
+            // Ein vergroesserter Ausschnitt wuerde beim Anheben nur halb zu sehen sein.
+            launch { zoom.animateTo(1f, tween(LIFT_MS)) }
+            pan = Offset.Zero
+            lift.animateTo(1f, spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow))
+        } else if (!deleting) {
+            lift.animateTo(0f, tween(LIFT_MS, easing = FastOutSlowInEasing))
+        }
+    }
 
     fun deleteCurrent() {
         val doomed = current
+        deleting = true
         scope.launch {
             if (!library.delete(doomed)) {
                 deleteFailed = true
+                deleting = false
+                lift.animateTo(0f, tween(LIFT_MS, easing = FastOutSlowInEasing))
                 return@launch
             }
             deleteFailed = false
+            // Das geloeschte Foto schrumpft und verblasst, erst dann rueckt das naechste nach
+            // (und waechst mit derselben Bewegung herein). Ein harter Wechsel liess offen, ob
+            // ueberhaupt etwas passiert war — man sah ja wieder ein Foto.
+            vanish.animateTo(1f, tween(VANISH_OUT_MS, easing = FastOutSlowInEasing))
             val remaining = photos - doomed
             pageImages.remove(doomed)
             failed.remove(doomed)
@@ -274,6 +378,10 @@ fun PhotoViewer(
                 photos = remaining
                 zoom.snapTo(1f)
                 pan = Offset.Zero
+                // Das naechste Foto waechst an seinem normalen Platz herein, nicht angehoben.
+                lift.snapTo(0f)
+                deleting = false
+                vanish.animateTo(0f, tween(VANISH_IN_MS, easing = FastOutSlowInEasing))
             }
         }
     }
@@ -300,17 +408,51 @@ fun PhotoViewer(
     }
     LaunchedEffect(closeAfterDelete) { if (closeAfterDelete) close() }
     PlatformBackHandler(enabled = true, onBack = close)
-    // Nach dem Haupt-Handler registriert, hat damit Vorrang: "Zurueck" schliesst erst das
-    // Info-Panel, dann die Ansicht.
-    PlatformBackHandler(enabled = infoOpen, onBack = { infoOpen = false })
+
+    /**
+     * Blaettern, waehrend ein Panel offen ist (Info): die Seitenleiste mit Nachbarn steht
+     * dann nicht zur Verfuegung, das Foto ist ja angehoben. Stattdessen dieselbe kurze Geste
+     * wie beim Loeschen — Foto schrumpft und verblasst, das naechste waechst angehoben herein.
+     */
+    fun stepWhileLifted(step: Int) {
+        val target = photos.getOrNull(photos.indexOf(current) + step) ?: return
+        scope.launch {
+            vanish.animateTo(1f, tween(VANISH_OUT_MS / 2, easing = FastOutSlowInEasing))
+            current = target
+            zoom.snapTo(1f)
+            pan = Offset.Zero
+            vanish.animateTo(0f, tween(VANISH_IN_MS, easing = FastOutSlowInEasing))
+        }
+    }
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .onGloballyPositioned { windowOffset = it.positionInWindow() },
     ) {
+        // Bedienelemente: per Tipp ausblendbar (chromeAlpha) und waehrend der Loeschen-Frage
+        // ausgeblendet — dann sind sie nicht bedienbar und lenken vom Foto ab. Nach dem
+        // Loeschen kommen sie zusammen mit dem naechsten Foto zurueck (vanish), statt
+        // schlagartig vor dem noch dunklen Bild zu stehen.
+        val chrome = chromeAlpha * (1f - max(lift.value, vanish.value))
         val density = LocalDensity.current
         val container = with(density) { Size(maxWidth.toPx(), maxHeight.toPx()) }
+
+        // Wohin das Foto beim Loeschen-Panel ausweicht: darueber (hoch) oder links daneben
+        // (quer). Bevor das Panel einmal vermessen ist, mit einer Schaetzung.
+        val sideways = container.width > container.height
+        val liftFreeArea = with(density) {
+            val gap = LIFT_GAP.toPx()
+            if (sideways) {
+                val sheetWidth = if (sheetSize.width > 0) sheetSize.width.toFloat() else SHEET_SIDE_WIDTH.toPx()
+                Rect(gap, LIFT_TOP_SIDEWAYS.toPx(), container.width - sheetWidth - SHEET_SIDE_MARGIN.toPx() - gap, container.height - gap)
+            } else {
+                // Nicht TOP_CONTROLS_CLEARANCE: die Knoepfe oben sind waehrend der Frage
+                // ausgeblendet, ihr Platz gehoert dem Foto.
+                val sheetHeight = if (sheetSize.height > 0) sheetSize.height.toFloat() else LIFT_SHEET_FALLBACK.toPx()
+                Rect(0f, LIFT_TOP.toPx(), container.width, container.height - sheetHeight - gap)
+            }
+        }
         val pageStride = container.width + with(density) { PAGE_GAP.toPx() }
         val currentBitmap = bitmapFor(current)
         val target = currentBitmap?.let { fittedRect(container, it.width.toFloat() / it.height) }
@@ -375,11 +517,13 @@ fun PhotoViewer(
                         },
                     )
                 }
-                // Doppeltippen vergroessert; einfache Tipps landen hier und gehen nicht zum
-                // Sucher darunter durch.
+                // Doppeltippen vergroessert, ein einzelner Tipp blendet die Bedienelemente
+                // aus bzw. wieder ein; Tipps landen hier und gehen nicht zum Sucher darunter
+                // durch.
                 .pointerInput(target) {
                     if (target == null) return@pointerInput
                     detectTapGestures(
+                        onTap = { if (!closing) controlsVisible = !controlsVisible },
                         onDoubleTap = { tap ->
                             if (closing) return@detectTapGestures
                             val zoomIn = zoom.value < DOUBLE_TAP_ZOOM * 0.9f
@@ -441,68 +585,90 @@ fun PhotoViewer(
                 val start = thumbnailRect ?: pageTarget.scaledAroundCenter(0.85f)
                 val rect = lerp(start, pageTarget, progress.value)
                 val dragScale = 1f - DISMISS_MAX_SHRINK * dragFraction
+                val lifted = liftedPlacement(image = pageTarget, free = liftFreeArea)
+                val liftCornerPx = with(density) { LIFT_CORNER.toPx() } / lifted.scale
                 PageImage(
                     bitmap = bitmap,
                     rect = rect,
-                    cornerPx = if (growsFromThumbnail) (start.minDimension / 2f) * (1f - progress.value) else 0f,
+                    cornerPx = max(
+                        if (growsFromThumbnail) (start.minDimension / 2f) * (1f - progress.value) else 0f,
+                        liftCornerPx * lift.value,
+                    ),
                     modifier = Modifier.graphicsLayer {
-                        scaleX = zoom.value * dragScale
-                        scaleY = zoom.value * dragScale
-                        translationX = pan.x + shiftX
-                        translationY = pan.y + dismissY
+                        val vanishScale = 1f - VANISH_SHRINK * vanish.value
+                        val liftScale = 1f - (1f - lifted.scale) * lift.value
+                        scaleX = zoom.value * dragScale * vanishScale * liftScale
+                        scaleY = zoom.value * dragScale * vanishScale * liftScale
+                        translationX = pan.x + shiftX + lifted.offsetX * lift.value
+                        translationY = pan.y + dismissY + lifted.offsetY * lift.value
                         // Aus dem Kreis heraus blendet das Bild nur teilweise ein — das wirkt
                         // weicher als ein hartes Erscheinen. Ohne Kreis ganz.
-                        alpha = if (growsFromThumbnail) 0.4f + 0.6f * progress.value else progress.value
+                        alpha = (if (growsFromThumbnail) 0.4f + 0.6f * progress.value else progress.value) *
+                            (1f - vanish.value)
                     },
                 )
             }
         }
 
-        if (photos.size > 1) {
-            Text(
-                text = "${index + 1} / ${photos.size}",
-                color = Color.White,
-                style = MaterialTheme.typography.labelLarge,
+        // Ausgeblendete Elemente werden gar nicht erst gezeichnet — Alpha 0 allein liesse
+        // sie weiter antippbar.
+        if (chrome > 0.01f) {
+            if (photos.size > 1) {
+                Text(
+                    text = "${index + 1} / ${photos.size}",
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 58.dp)
+                        .graphicsLayer { alpha = progress.value * (1f - dragFraction) * chrome },
+                )
+            }
+
+            val controlsAlpha = progress.value * (1f - dragFraction) * chrome
+
+            InfoButton(
+                open = infoOpen,
+                onClick = { infoOpen = true },
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 58.dp)
-                    .graphicsLayer { alpha = progress.value * (1f - dragFraction) },
-            )
-        }
-
-        DeleteButton(
-            onClick = { deleteFailed = false; shareFailed = false; confirmDelete = true },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(end = 16.dp, top = 48.dp)
-                .graphicsLayer { alpha = progress.value * (1f - dragFraction) },
-        )
-
-        val controlsAlpha = progress.value * (1f - dragFraction)
-
-        if (infoOpen) {
-            PhotoInfoPanel(
-                details = details?.takeIf { it.first == current }?.second,
-                loading = details?.first != current,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(start = 16.dp, end = 16.dp, bottom = ACTION_BAR_CLEARANCE)
+                    .align(Alignment.TopEnd)
+                    .padding(end = 16.dp, top = 48.dp)
                     .graphicsLayer { alpha = controlsAlpha },
             )
-        }
 
-        ViewerActionBar(
-            infoOpen = infoOpen,
-            onShare = {
-                deleteFailed = false
-                shareFailed = !library.share(current)
-            },
-            onInfo = { infoOpen = !infoOpen },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 48.dp)
-                .graphicsLayer { alpha = controlsAlpha },
-        )
+            if (current in assessments) {
+                assessments[current]?.let { assessment ->
+                    ScoreOverlay(
+                        verdict = assessment.verdict,
+                        score = assessment.score,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = ACTION_BAR_CLEARANCE)
+                            .graphicsLayer { alpha = controlsAlpha },
+                    )
+                }
+            } else {
+                PhotoScorePending(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = ACTION_BAR_CLEARANCE)
+                        .graphicsLayer { alpha = controlsAlpha },
+                )
+            }
+
+            ViewerActionBar(
+                onShare = {
+                    deleteFailed = false
+                    shareFailed = !library.share(current)
+                },
+                onDelete = { deleteFailed = false; shareFailed = false; confirmDelete = true },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 48.dp)
+                    .graphicsLayer { alpha = controlsAlpha },
+            )
+
+        }
 
         if (deleteFailed || shareFailed) {
             Text(
@@ -510,30 +676,37 @@ fun PhotoViewer(
                 color = Color.White,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = ACTION_BAR_CLEARANCE),
+                    .padding(bottom = SCORE_BAR_CLEARANCE),
             )
         }
 
-        if (confirmDelete) {
-            AlertDialog(
-                onDismissRequest = { confirmDelete = false },
-                title = { Text("Foto löschen?") },
-                text = { Text("Das Foto wird endgültig gelöscht, auch aus deiner Galerie.") },
-                confirmButton = {
-                    TextButton(onClick = { confirmDelete = false; deleteCurrent() }) { Text("Löschen") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { confirmDelete = false }) { Text("Abbrechen") }
-                },
+        if (chrome > 0.01f) {
+            CloseButton(
+                onClick = close,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 16.dp, top = 48.dp)
+                    .graphicsLayer { alpha = progress.value * (1f - dragFraction) * chrome },
             )
         }
 
-        CloseButton(
-            onClick = close,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 16.dp, top = 48.dp)
-                .graphicsLayer { alpha = progress.value * (1f - dragFraction) },
+        // Zuletzt, damit es ueber allem liegt — auch ueber dem X oben links.
+        DeleteConfirmSheet(
+            visible = confirmDelete,
+            sideways = sideways,
+            onSizeChanged = { sheetSize = it },
+            onConfirm = { confirmDelete = false; deleteCurrent() },
+            onDismiss = { confirmDelete = false },
+        )
+        PhotoInfoSheet(
+            visible = infoOpen,
+            sideways = sideways,
+            details = details?.takeIf { it.first == current }?.second,
+            loading = details?.first != current,
+            position = if (photos.size > 1) "${index + 1} / ${photos.size}" else null,
+            onSizeChanged = { sheetSize = it },
+            onSwipe = ::stepWhileLifted,
+            onDismiss = { infoOpen = false },
         )
     }
 }
@@ -715,34 +888,6 @@ private fun CloseButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
             val stroke = size.width * 0.14f
             drawLine(Color.White, Offset.Zero, Offset(size.width, size.height), stroke)
             drawLine(Color.White, Offset(size.width, 0f), Offset(0f, size.height), stroke)
-        }
-    }
-}
-
-/** Papierkorb-Knopf: wie [CloseButton] auf dunklem Kreis, von Hand gezeichnet. */
-@Composable
-private fun DeleteButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .size(44.dp)
-            .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.5f))
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Canvas(modifier = Modifier.size(18.dp)) {
-            val stroke = size.width * 0.1f
-            val w = size.width
-            val h = size.height
-            // Deckel mit Griff
-            drawLine(Color.White, Offset(w * 0.05f, h * 0.22f), Offset(w * 0.95f, h * 0.22f), stroke)
-            drawLine(Color.White, Offset(w * 0.35f, h * 0.22f), Offset(w * 0.35f, h * 0.05f), stroke)
-            drawLine(Color.White, Offset(w * 0.65f, h * 0.22f), Offset(w * 0.65f, h * 0.05f), stroke)
-            drawLine(Color.White, Offset(w * 0.35f, h * 0.05f), Offset(w * 0.65f, h * 0.05f), stroke)
-            // Eimer
-            drawLine(Color.White, Offset(w * 0.18f, h * 0.22f), Offset(w * 0.25f, h * 0.95f), stroke)
-            drawLine(Color.White, Offset(w * 0.82f, h * 0.22f), Offset(w * 0.75f, h * 0.95f), stroke)
-            drawLine(Color.White, Offset(w * 0.25f, h * 0.95f), Offset(w * 0.75f, h * 0.95f), stroke)
         }
     }
 }

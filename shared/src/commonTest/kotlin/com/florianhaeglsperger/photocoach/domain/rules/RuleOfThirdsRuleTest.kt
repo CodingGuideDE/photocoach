@@ -3,6 +3,7 @@ package com.florianhaeglsperger.photocoach.domain.rules
 import com.florianhaeglsperger.photocoach.domain.CENTER
 import com.florianhaeglsperger.photocoach.domain.LANDSCAPE_16_9
 import com.florianhaeglsperger.photocoach.domain.PORTRAIT_9_16
+import com.florianhaeglsperger.photocoach.domain.THIRD_BOTTOM
 import com.florianhaeglsperger.photocoach.domain.THIRD_LEFT
 import com.florianhaeglsperger.photocoach.domain.THIRD_TOP
 import com.florianhaeglsperger.photocoach.domain.faceAt
@@ -79,29 +80,49 @@ class RuleOfThirdsRuleTest {
     }
 
     @Test
-    fun `deutlicher Versatz nennt Prozentwert und Kamerarichtung`() {
-        val rechts = faceAt(THIRD_LEFT + 0.12f, THIRD_TOP)
+    fun `kleiner deutlicher Versatz heisst etwas`() {
+        val rechts = faceAt(THIRD_LEFT + 0.08f, THIRD_TOP)
 
         val hint = RuleOfThirdsRule.evaluate(frame(faces = listOf(rechts)))
 
-        assertEquals(
-            "Motiv ca. 12 % zu weit rechts — Kamera etwas nach rechts schwenken.",
-            assertNotNull(hint).message,
-        )
+        assertEquals("Motiv etwas zu weit rechts", assertNotNull(hint).message)
     }
 
     @Test
-    fun `Versatz nach links nennt die Gegenrichtung der Kamera`() {
-        // Kamerafuehrung ist entgegengesetzt zum Versatz: Motiv zu weit links heisst, die
-        // Kamera muss nach links schwenken, damit der Bildinhalt nach rechts wandert.
-        val links = faceAt(THIRD_LEFT - 0.12f, THIRD_TOP)
+    fun `grosser Versatz heisst viel`() {
+        val links = faceAt(THIRD_LEFT - 0.15f, THIRD_TOP)
 
         val hint = RuleOfThirdsRule.evaluate(frame(faces = listOf(links)))
 
-        assertEquals(
-            "Motiv ca. 12 % zu weit links — Kamera etwas nach links schwenken.",
-            assertNotNull(hint).message,
-        )
+        assertEquals("Motiv viel zu weit links", assertNotNull(hint).message)
+    }
+
+    @Test
+    fun `Grenze zwischen etwas und viel liegt bei LARGE_OFFSET_PERCENT`() {
+        val knappDarunter = faceAt(THIRD_LEFT + (RuleOfThirdsRule.LARGE_OFFSET_PERCENT - 1) / 100f, THIRD_TOP)
+        val genauDrauf = faceAt(THIRD_LEFT + RuleOfThirdsRule.LARGE_OFFSET_PERCENT / 100f, THIRD_TOP)
+
+        assertEquals("Motiv etwas zu weit rechts", RuleOfThirdsRule.evaluate(frame(faces = listOf(knappDarunter)))?.message)
+        assertEquals("Motiv viel zu weit rechts", RuleOfThirdsRule.evaluate(frame(faces = listOf(genauDrauf)))?.message)
+    }
+
+    @Test
+    fun `Motiv oberhalb des Drittel-Punkts ist zu hoch`() {
+        // Hochformat, damit die senkrechte Achse die dominante ist.
+        val hoch = faceAt(THIRD_LEFT, THIRD_BOTTOM - 0.08f)
+
+        val hint = RuleOfThirdsRule.evaluate(frame(faces = listOf(hoch), aspectRatio = PORTRAIT_9_16))
+
+        assertEquals("Motiv viel zu hoch", assertNotNull(hint).message)
+    }
+
+    @Test
+    fun `Hinweis enthaelt weder Prozent noch Kamera-Anweisung`() {
+        // Bewusste Entscheidung (10.10.2026): "Motiv zu hoch — Kamera nach oben" wurde als
+        // Widerspruch gelesen, und Prozentwerte sagen beim Fotografieren nichts.
+        val hint = assertNotNull(RuleOfThirdsRule.evaluate(frame(faces = listOf(faceAt(0.5f, THIRD_TOP)))))
+
+        assertTrue("%" !in hint.message && "Kamera" !in hint.message, "kam: ${hint.message}")
     }
 
     @Test
@@ -113,10 +134,9 @@ class RuleOfThirdsRuleTest {
         val hint = RuleOfThirdsRule.evaluate(frame(faces = listOf(tief)))
 
         assertTrue(
-            assertNotNull(hint).message.contains("zu weit unten"),
+            assertNotNull(hint).message.endsWith("zu tief"),
             "unerwarteter Hinweis: ${hint.message}",
         )
-        assertTrue(hint.message.contains("nach unten schwenken"))
     }
 
     @Test

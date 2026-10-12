@@ -3,6 +3,7 @@ package com.florianhaeglsperger.photocoach.domain
 import com.florianhaeglsperger.photocoach.domain.model.FaceRect
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 import com.florianhaeglsperger.photocoach.domain.model.SaliencyPoint
+import com.florianhaeglsperger.photocoach.domain.model.StructureGrid
 
 /**
  * Bausteine, um `FrameAnalysis`-Situationen fuer Regel-Tests zu beschreiben.
@@ -41,13 +42,29 @@ fun frame(
     faces: List<FaceRect> = emptyList(),
     timestampMs: Long = 0L,
     aspectRatio: Float = LANDSCAPE_16_9,
+    structure: StructureGrid? = null,
 ): FrameAnalysis = FrameAnalysis(
     horizonTiltDegrees = tiltDegrees,
     saliencyRegions = saliency,
     faces = faces,
     timestampMs = timestampMs,
     aspectRatio = aspectRatio,
+    structure = structure,
 )
+
+/** Struktur-Wert fuer "hier ist deutlich etwas" — klar ueber der Schwelle der DeadSpaceRule. */
+const val TEXTURED = 0.1f
+
+/** Struktur-Wert fuer "glatte Flaeche" (Himmel, Wand) — klar darunter. */
+const val SMOOTH = 0.01f
+
+/**
+ * Ein 12x12-Strukturraster, Wert je Zelle aus [value] (Spalte, Zeile; 0,0 = oben links).
+ *
+ * Beispiel "rechte Haelfte glatt": `structure { column, _ -> if (column < 6) TEXTURED else SMOOTH }`
+ */
+fun structure(value: (column: Int, row: Int) -> Float): StructureGrid =
+    StructureGrid(12, 12, List(144) { value(it % 12, it / 12) })
 
 /** Quer, 16:9 — die Vorgabe, solange ein Test nichts anderes braucht. */
 const val LANDSCAPE_16_9 = 16f / 9f

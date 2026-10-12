@@ -238,12 +238,93 @@ dann negativ, Konvention sagt positiv). Beim Geraetetest pruefen: rechts kippen,
 angehoben (Plan 3.2 nannte 2°, war im Gebrauch zu empfindlich). Tests angepasst.
 
 **Foto loeschen in der Vollbild-Ansicht (06.10.2026).** `PhotoLibrary.delete()` (Android:
-`ContentResolver.delete`, iOS: Stub `false`), Papierkorb-Knopf oben rechts im `PhotoViewer`
-mit Rueckfrage-Dialog. Danach rueckt das naechstaeltere Foto nach, beim letzten schliesst die
-Ansicht; `onDeleted` aktualisiert die Vorschau im Sucher. **Noch nicht am Geraet/Emulator
-verifiziert**, keine Unit-Tests (haengt am MediaStore). Offen: Fotos, die der App nicht mehr
+`ContentResolver.delete`, iOS: Stub `false`), "Loeschen" in der Aktionsleiste unten im
+`PhotoViewer` (bis 06.10.2026 oben rechts, auf Nutzerwunsch mit Info getauscht) mit
+Rueckfrage (seit 10.10.2026 `DeleteConfirmSheet`, siehe unten). Danach rueckt das
+naechstaeltere Foto nach, beim letzten schliesst die Ansicht; `onDeleted` aktualisiert die
+Vorschau im Sucher. Im Emulator verifiziert (10.10.2026): Loeschen eines frisch
+aufgenommenen Fotos entfernt genau diese Datei aus `Pictures/PhotoCoach`. Keine Unit-Tests
+fuer das Loeschen selbst (haengt am MediaStore). Offen: Fotos, die der App nicht mehr
 gehoeren, lassen sich ohne `RecoverableSecurityException`-Behandlung nicht loeschen ("Löschen
 nicht möglich" erscheint) — sie tauchen ab API 29 aber ohnehin nicht in der Liste auf.
+
+**Loeschen-Rueckfrage neu gestaltet (10.10.2026, `ui/DeleteConfirmSheet.kt`).** Statt
+Material-`AlertDialog` in der Bildmitte ein Panel, das unten aus der Aktionsleiste
+hochfaehrt (Querformat: rechts angedockt). In fuenf Iterationen am Emulator entstanden —
+die Entscheidungen, damit sie nicht wieder rueckgaengig gemacht werden:
+- **Das Foto wird "angehoben"** (`lift` im `PhotoViewer`): verkleinert, runde Ecken, ganz in
+  den freien Bereich ueber/neben dem Panel (`liftedPlacement(image, free)`, 5 Unit-Tests).
+  Eine Vorschau *im* Panel war doppelt (das echte Foto stand darueber) und flog raus.
+- **Keine Abdunklung** — sie dunkelte genau das Foto ab, um das es geht. Stattdessen blenden
+  X/Zaehler/Info/Leiste aus (`chrome = chromeAlpha * (1 - max(lift, vanish))`); ein Tipp
+  neben das Panel bricht trotzdem ab (transparenter Tipp-Faenger).
+- **Gewichtung:** Loeschen ist die einzige gefuellte Flaeche (`DESTRUCTIVE`, mit Papierkorb),
+  Abbrechen ein ruhiger Textknopf **unten** — dort, wo der Finger gerade "Loeschen" in der
+  Leiste getippt hat; ein Doppeltipp trifft das Harmlose.
+- **Bewegung als eine Geste:** Anheben → bestaetigen → dasselbe Foto schrumpft weiter und
+  verblasst (`vanish`) → das naechste waechst an seinem normalen Platz herein, die
+  Bedienelemente blenden *mit* ihm ein (vorher sprangen sie schlagartig auf).
+- Schliessen: Abbrechen, Tipp daneben, wegziehen (hoch: nach unten, quer: nach rechts),
+  Zurueck — alle vier im Emulator geprueft, ohne dass etwas geloescht wurde. Haptik beim
+  Bestaetigen (`HapticFeedbackType.LongPress`, am Emulator nicht pruefbar).
+- **Testen per adb:** Knoepfe nur ueber ihre Koordinaten aus `uiautomator dump` antippen,
+  nie aus Screenshots geschaetzt — beim Schaetzen wurde am 10.10. versehentlich ein
+  Testfoto (`PhotoCoach_20261008_190307.jpg`, Emulator-Szene) geloescht. Bei offenem Panel
+  gibt es genau einen "Löschen"-Eintrag (die Leiste ist dann nicht komponiert); vorher auf
+  "Foto löschen?" pruefen. Animationen sieht man im ueberlasteten Emulator nur mit
+  `settings put global animator_duration_scale 5` (danach wieder auf 1!).
+
+**Info-Ansicht neu gestaltet (10.10.2026, `ui/PhotoInfoSheet.kt`).** Gleiche Sprache wie die
+Loeschen-Rueckfrage: Panel faehrt unten hoch (quer: rechts), das Foto wird angehoben statt
+von einem Kasten verdeckt. Dafuer ist der Panel-Rahmen jetzt **gemeinsam**:
+`ui/ViewerSheet.kt` (Hoch-/Querformat, Wegziehen, Tipp-daneben-schliesst, Zurueck,
+`onSizeChanged` fuer das Anheben, `animateContentSize`). `DeleteConfirmSheet` und
+`PhotoInfoSheet` liefern nur noch Inhalt. Im Viewer heben beide ueber
+`sheetOpen = confirmDelete || infoOpen` an.
+- **Gliederung statt Liste** (vorher 11 gleichfoermige Zeilen): Datum als Ueberschrift,
+  Uhrzeit · Kamera darunter, "1 / 21" rechts (ersetzt den ausgeblendeten Zaehler);
+  Blende/Belichtung/ISO/Brennweite als vier Kacheln; Aufloesung/Groesse und
+  Weissabgleich/Blitz im 2x2-Raster; Dateiname klein und gedaempft zuletzt.
+  `PhotoDetails` hat dafuer `takenDate`/`takenTime` (statt `takenAt`), `exposureTiles()`,
+  `detailRows()`, `subtitle()` — Unit-Tests in `PhotoDetailsTest`.
+- **Blaettern bleibt moeglich:** seitlicher Wisch neben dem Panel → `ViewerSheet.onSwipe`
+  → `stepWhileLifted` (Foto verblasst, naechstes waechst angehoben herein, Daten blenden ueber).
+- Ladezustand: Spinner im Panel mit fester Mindesthoehe, danach waechst das Panel weich
+  auf seine Groesse — das angehobene Foto gleitet mit statt zu springen.
+- Datum/Uhrzeit folgen der Geraetesprache (Emulator: englisch, auf deutschen Geraeten
+  "Dienstag, 6. Oktober 2026 · 20:37") — gewollt.
+Im Emulator verifiziert: Hoch- und Querformat, Blaettern bei offenem Panel (Daten wechseln),
+Schliessen per Tipp daneben / Zurueck / Wegziehen, Loeschen-Panel nach dem Umbau
+unveraendert (Abbrechen). `allTests` gruen inkl. iOS-Simulator.
+**Emulator-Falle:** `adb emu rotate` dreht in Vierteln weiter, nicht hin und zurueck — nach
+Tests die Lage pruefen (`dumpsys window displays | grep mCurrentRotation`, Ziel
+`ROTATION_0`); eine Testreihe lief sonst mit falschen Koordinaten.
+
+**Live-Bewertung beruhigt (08.10.2026).** Der Sucher war oben unruhig: ein langer Satz brach
+mitten im Text um, die Karte sprang zwischen ein- und zweizeilig, und daneben standen
+Debug-Zeile, Raster- und PRO-Knopf in unterschiedlichen Hoehen. Jetzt: `ScoreOverlay` zeigt
+zwei Zeilen mit fester Rolle (fett = was nicht stimmt, gedaempft = was zu tun ist, per
+`splitHint` am Trenner " — " aus dem unveraenderten Regeltext), Mindesthoehe 64 dp. Die
+Debug-Zeile ist standardmaessig aus; Antippen der Karte blendet sie ein. Raster-/PRO-Knopf
+sitzen etwas tiefer, sauber unter der Karte. Regeltexte, Scorer und Protokoll unveraendert.
+Im Emulator verifiziert (Hinweis- und "passt"-Zustand, Debug-Toggle); `SplitHintTest` gruen,
+`allTests` (iOS) nicht gelaufen. Annahme: alle Regeltexte folgen "Problem — Handlung." —
+neue Regeln muessen dabei bleiben, sonst steht alles in der ersten Zeile.
+
+**Bedienelemente per Tipp ausblenden (08.10.2026).** Ein einzelner Tipp aufs Bild im
+`PhotoViewer` blendet Bewertung, Teilen/Loeschen, Info, Zaehler und X aus (Bild pur), der
+naechste wieder ein (`controlsVisible`, `onTap` neben dem Doppeltipp-Zoom). Ausgeblendete
+Elemente werden nicht gezeichnet, sind also auch nicht antippbar; Zurueck-Taste und
+Wegziehen schliessen weiterhin. Im Emulator verifiziert.
+
+**Motiv-Debug-Rechteck (10.10.2026).** Hinweiskarte oben antippen (Schalter der Rohdaten-
+Zeile) zeigt zusaetzlich `SubjectDebugOverlay`: Rechteck + Mittelpunkt des Motivs, das
+`DefaultSubjectResolver` fuer die Regeln waehlt, mit Quelle (Gesicht = magenta, Saliency =
+gelb) und Verlaesslichkeit. `SubjectPoint.bounds` (neu, optional): bei Gesicht dessen Rahmen,
+bei Saliency die Huelle der Klumpen-Punkte — **nur grobe Schaetzung**: der Klumpen ist auf
+`CLUSTER_RADIUS` begrenzt, das Rechteck deckt grosse Objekte (im Emulator ein Fernseher)
+deshalb nur teilweise ab. Der Mittelpunkt, auf dem die Regeln rechnen, ist davon unberuehrt.
+Im Emulator verifiziert, Unit-Tests in `SubjectResolverTest`.
 
 **Objektiv-Umschalter.** `LensToggle` rechts neben dem Ausloeser, nur sichtbar wenn das
 Geraet beide Kameras hat. `CameraState.Running` traegt `lensFacing`, `canSwitchLens` und
@@ -338,7 +419,7 @@ wird angeboten, korrekt), die **Frontkamera hat alles** — dort getestet: 1/800
 sichtbar ab, ISO 1000 hellt auf, Foto mit manuellen Werten gespeichert und protokolliert,
 Rueckweg zu Auto belichtet wieder normal, WB-/Fokus-UI setzen die Werte. **Nicht
 verifiziert:** sichtbare Wirkung von WB und Fokus (synthetische Emulator-Szene) und
-alles an einem echten Geraet. Offen: Tap-to-Focus fehlt, WB nur Voreinstellungen (kein
+alles an einem echten Geraet. Offen: WB nur Voreinstellungen (kein
 Kelvin), Blitz-Modi wurden nicht angefasst.
 
 **Foto-Vorschau und Vollbild-Ansicht (05.10.2026).** Runde Vorschau des letzten Fotos
@@ -406,8 +487,10 @@ Doppeltipp — `input tap x y & sleep 0.12; input tap x y` in *einer* `adb shell
 
 **Teilen und Info in der Vollbild-Ansicht (06.10.2026) — Stufe A aus
 `Planung/Foto-Bearbeitung.md` damit komplett.** Aktionsleiste unten (`ViewerActionBar` in
-`ui/PhotoViewerActions.kt`), bewusst nur `Teilen · Info`: Analyse/Bearbeiten kommen mit
-Stufe B/C, nicht vorher als tote Platzhalter.
+`ui/PhotoViewerActions.kt`) mit `Teilen · Löschen`, Info oben rechts (`InfoButton`, Panel
+klappt darunter auf) — diese Aufteilung auf Nutzerwunsch (06.10.2026; vorher Info unten,
+Papierkorb oben). Analyse/Bearbeiten kommen mit Stufe B/C in die Leiste, nicht vorher als
+tote Platzhalter.
 - `PhotoLibrary.share()` — System-Chooser mit `ACTION_SEND`, Lesefreigabe nur fuer diese
   URI (`FLAG_GRANT_READ_URI_PERMISSION` + `ClipData`, sonst keine Vorschau im Chooser).
   Gestartet aus dem Activity-Context (`uiContext`), damit "Zurueck" in die App fuehrt.
@@ -419,8 +502,7 @@ Stufe B/C, nicht vorher als tote Platzhalter.
 - **Falle:** das *Framework*-`android.media.ExifInterface` kennt
   `TAG_PHOTOGRAPHIC_SENSITIVITY` nicht (nur AndroidX) — `TAG_ISO_SPEED_RATINGS` ist
   derselbe Tag 0x8827.
-- Info-Panel bleibt beim Blaettern offen, schluckt eigene Wischgesten (blaettert nicht),
-  "Zurueck" schliesst erst das Panel (zweiter `PlatformBackHandler`, spaeter registriert).
+- Info-Panel: seit 10.10.2026 `PhotoInfoSheet` (siehe "Info-Ansicht neu gestaltet").
 - **Fehlt in der Info, weil nicht im EXIF:** Objektiv, Zoomstufe, Aufnahme-Score —
   braucht `CaptureMeta` (Plan 4.3, im Hauptplan Abschnitt 4a als naechster Schritt).
 Im Emulator verifiziert: Werte stimmen mit direkt ausgelesenem EXIF ueberein (1/100 s,
@@ -428,6 +510,133 @@ f/4, ISO 200, 960 × 1280, 198 KB); Blaettern bei offenem Panel aktualisiert die
 Wisch auf dem Panel blaettert nicht; Zurueck schliesst nur das Panel; Teilen oeffnet den
 Chooser mit Bildvorschau, Zurueck fuehrt in den Viewer (gleicher Task). `allTests` gruen
 inkl. iOS-Simulator. Datum ist im Emulator englisch formatiert — Geraete-Locale, gewollt.
+
+**Dunkles Theme fuer alle Dialoge (06.10.2026).** `ui/Theme.kt` — `PhotoCoachTheme`
+(`darkColorScheme`), gesetzt in `App.kt`. Vorher lief `MaterialTheme` mit dem hellen
+Standard-Schema: der Loesch-Dialog im Viewer kam als weisser Kasten mit lila Knoepfen, der
+"Kamera freigeben"-Button war lila. Jetzt: Dialogflaeche #1E1E1E, Text weiss, Knoepfe in
+der App-Akzentfarbe `ACCENT` (#FFD54F, wie Zoom/Pro), "Löschen" in `DESTRUCTIVE`
+(#FF8A65, wie ein schlechter Score). Neue Material-Dialoge erben das automatisch — keine
+Farben im einzelnen Dialog setzen, ausser fuer zerstoererische Aktionen.
+Android-Fenster-Theme `Theme.PhotoCoach` (`androidApp/.../res/values/themes.xml`, dunkel,
+schwarzer Fenstergrund) statt `Theme.Material.Light` — kein weisser Blitz mehr beim Start.
+**Nicht beeinflussbar:** System-Dialoge (Kamera-Berechtigung, Teilen-Menue) folgen dem
+Dunkelmodus des Geraets, nicht der App.
+Im Emulator verifiziert: Loesch-Dialog dunkel ("Abbrechen" gelb, "Löschen" orange-rot),
+"Kamera freigeben" gelb mit schwarzer Schrift. **Bekannte Luecke:** Der Text der
+Berechtigungs-Ansicht in `CameraScreen` schreibt "koennen"/"Geraet" statt Umlauten —
+sichtbarer UI-Text, sollte korrigiert werden.
+
+**Tippen zum Scharfstellen + Belichtung am Punkt (08.10.2026).** Antippen im Sucher setzt
+Fokus, Belichtungsmessung und Weissabgleich auf den Punkt (`CameraState.Running.focusAt`,
+Android: CameraX `FocusMeteringAction` mit AF|AE|AWB ueber
+`previewView.meteringPointFactory` — die rechnet Drehung, FIT_CENTER und Frontkamera-
+Spiegelung selbst um). Am Punkt erscheint ein Ring (`ui/FocusIndicator.kt`, gelb bei
+erfolgreichem Fokus) und daneben ein senkrechter Belichtungsregler mit Sonne: nach oben =
+heller, ganze Leistenlaenge = ganzer Bereich (`evIndexForDrag`, unit-getestet).
+- **Ein Wert, nicht zwei:** Der Regler verstellt `ManualSettings.exposureCompensation` —
+  dieselbe Korrektur wie im Pro-Panel. Steht sie nicht auf 0, wird der PRO-Knopf gelb.
+- **Punkt bleibt eingerastet** (`disableAutoCancel`), sonst messe CameraX nach 5 s wieder das
+  ganze Bild und die Korrektur bezoege sich auf etwas anderes. Zurueck aufs ganze Bild:
+  lange druecken, Objektivwechsel oder Zoomen (nach dem Zoomen laege der Punkt auf anderem
+  Inhalt). Nach 3 s ohne Beruehrung verschwindet der Regler, ein blasser Ring bleibt als
+  Markierung.
+- **Zusammenspiel mit dem Pro-Modus:** Manueller Fokus schaltet den Autofokus ab und wuerde
+  den Tipp ueberstimmen — Antippen setzt ihn deshalb auf Auto zurueck. Bei manueller ISO
+  oder Verschlusszeit gibt es keinen Regler (keine Automatik, an der sich eine Korrektur
+  orientieren koennte), nur den Ring.
+- Pinch-Zoom und Tippen vertragen sich: die Zoom-Geste verbraucht die Bewegung, ein Tipp
+  ist per Definition ein Finger ohne Bewegung.
+Im Emulator verifiziert: Ring erscheint am Tipp-Punkt und wird gelb (Emulator meldet
+"scharf"), Regler daneben; Ziehen nach oben hellt sichtbar auf (+2,5 EV), PRO-Knopf wird
+gelb; nach 3 s nur noch blasser Ring, Korrektur bleibt; langes Druecken entfernt den Ring.
+**Nicht verifiziert:** echtes Scharfstellen (Emulator-Kamera hat keinen echten Autofokus),
+Frontkamera ohne AF, Zusammenspiel mit manuellem Fokus aus dem Pro-Panel, Zoom-Reset.
+
+**Bewertung gespeicherter Fotos im Viewer (08.10.2026, Stufe B aus
+`Planung/Foto-Bearbeitung.md`).** Ueber der Aktionsleiste steht dasselbe `ScoreOverlay` wie
+im Sucher. Kette: `PhotoLibrary.load(photo, STILL_ANALYSIS_MAX_DIMENSION = 640)` →
+`FrameAnalyzer.analyzeStill(ImageBitmap)` → **neuer** `CompositionScorer` pro Foto (der im
+Sucher haelt Drittel-Hysterese ueber Frames, die es zwischen Fotos nicht geben darf) →
+`ScoreOverlay`. Ergebnis pro Foto im Viewer gecacht; bis es da ist, `PhotoScorePending`.
+- 640 px mit Absicht: gleiche Groessenordnung wie die `ImageAnalysis`-Frames im Sucher,
+  damit ML Kit dieselben Mindest-Gesichtsgroessen sieht.
+- Saliency aus `lumaGridFromArgb` (`capture/StillLuma.kt`, commonMain, BT.601 = Y-Kanal der
+  Kamera, 4 Unit-Tests) — dieselbe Eingabeform wie `sampleUprightLuma` fuer Frames.
+- **Falle:** `ImageDecoder` liefert HARDWARE-Bitmaps; `getPixels()` wirft darauf.
+  `analyzeStill` kopiert deshalb nach ARGB_8888.
+- Nicht gespiegelt — auch beim Selfie nicht: das gespeicherte Foto ist es nicht, und die
+  Koordinaten sollen zur Vollbild-Ansicht passen.
+- iOS-`actual`: Saliency ueber denselben commonMain-Weg, keine Gesichter (pausiert, wird
+  nie aufgerufen, weil `PhotoLibrary` dort leer ist).
+**Bekannte Luecke: kein Horizont.** `horizonTiltDegrees` ist bei Fotos `null` — die Neigung
+kommt im Sucher aus dem Lagesensor und wird nicht mitgespeichert. Folge: bei geradem
+Horizont liegt der Score im Viewer unter dem im Sucher (gemessen: 83 statt 93, gleiches
+Urteil "Komposition passt"), bei schiefem Horizont *darueber*, und der Horizont-Hinweis
+kann im Viewer nie erscheinen. Behebt sich mit `CaptureMeta` (Plan 4.3 / Hauptplan 4a).
+Im Emulator verifiziert: Bewertung erscheint, alle 22 Fotos werden bewertet (Scores
+69-95, mehrfach echte Hinweise), Blaettern zeigt gecachte Werte sofort. `allTests` gruen
+inkl. iOS-Simulator.
+
+**Bugfix ML-Kit-Warteschlange (08.10.2026).** Anlass: im Viewer stand 8-12 s
+"Komposition wird bewertet …". Gemessen (temporaere Zeitstempel, wieder entfernt):
+- **Echter Fehler:** ML Kit arbeitet alle Auftraege auf *einem* gemeinsamen Thread ab.
+  `Tasks.await` mit Timeout bricht nur das Warten ab, nicht den Auftrag. War die Erkennung
+  langsamer als der Analyse-Takt (Emulator: 1,2-1,6 s pro Erkennung), wuchs die Schlange aus
+  dem Sucher ohne Ende — Hinweise immer spaeter, und `analyzeStill` (gleicher Thread) stand
+  ganz hinten und lief mit 500 ms Timeout **stumm ohne Gesichter** durch (ein Portraet waere
+  ohne Gesicht bewertet worden). Fix in `FrameAnalyzer.android.kt`: `pendingLiveTask` —
+  solange eine Sucher-Erkennung aussteht, keine neue einreihen, `lastLiveFaces` weiterverwenden;
+  `analyzeStill` wartet bis `STILL_DETECT_TIMEOUT_MS` (10 s). Nachgemessen: waehrend der
+  Viewer offen ist, laufen 0-1 Sucher-Erkennungen statt eines Dauerstroms.
+- **Kein Fehler, sondern der Emulator:** `Medium_Phone_API_36.0` hat **1 CPU-Kern und 2 GB
+  RAM**, davon ~1 GB im Swap. Dort brauchten selbst `lumaGridFromArgb` 2,4 s und Spectral
+  Residual auf 64 x 64 4,3 s (auf echter Hardware: Millisekunden). **Zeitmessungen im
+  Emulator sind deshalb nicht aussagekraeftig**, und `uiautomator dump` in einer Schleife
+  verlangsamt ihn zusaetzlich. Wer dort misst: Zeitstempel per `println` (Tag `System.out`)
+  statt UI-Polling.
+- Offen (Vorschlag, nicht umgesetzt): die Live-Analyse pausieren, solange der Viewer offen
+  ist — spart Akku und gibt `analyzeStill` die CPU. Gehoert in `CameraScreen`/`CameraPreview`.
+- App-Start fuer Tests: `adb shell am start -W -n com.florianhaeglsperger.photocoach/.android.MainActivity`
+  — `monkey` hat die App bei Last mehrfach nicht in den Vordergrund geholt (der naechste
+  Tipp landete dann auf dem Homescreen).
+
+**Tote Flaeche ueber Bildstruktur statt Saliency (08.10.2026).** Anlass: bei Kontrast-
+Aufnahmen mit etwas im Vordergrund meldete die Regel teils "Bildhaelfte fast leer", obwohl
+dort Struktur war. Ursachen (an synthetischen Szenen nachgestellt): die Saliency ist aufs
+Maximum normiert und schwellt bei 45 % — ein harter Kontrast vorne drueckt jede schwaechere
+Struktur darunter; ausserdem markiert Spectral Residual bei grossen Objekten nur Konturen.
+- Neues Feld `FrameAnalysis.structure: StructureGrid?` (12×12, lokaler Kontrast =
+  mittlerer Helligkeitsgradient / (Zellhelligkeit + 0,05), helligkeitsunabhaengig).
+  Berechnet in `capture/ImageStructure.kt` (commonMain) aus demselben 64×64-Helligkeitsraster
+  wie die Saliency — live (Android, mit Frontkamera-Spiegelung) und in `analyzeStill`
+  (Android + iOS). Die iOS-*Live*-Analyse liefert `null` (pausiert, nicht angeschlossen).
+- `DeadSpaceRule`: Anteil strukturierter Zellen je Haelfte (Schwelle 0,03 — gemessen:
+  glatter Himmel ~0,01, schwache Textur ~0,03, Mauer/Laub ~0,08, Holzwand im Emulator
+  0,05-0,25). Leer unter 10 %, wenn die andere Haelfte mindestens 25 % hat; fast
+  strukturloses Bild (< 5 %) = keine Meinung. Drittel-Ausnahme unveraendert.
+- Bewusst **nicht** mitgebaut (Entscheidung des Nutzers, erst Massnahme 1): gewollten
+  Negativraum (Minimalismus) als Grund erkennen, zeitliche Daempfung gegen sporadisches
+  Anschlagen. **Bekannte Luecke:** Silhouette vor glattem Himmel meldet weiter "leer",
+  sofern das Motiv nicht nahe einer Drittel-Linie liegt; und die Drittel-Ausnahme stuetzt
+  sich auf den Saliency-Motivpunkt — der sitzt bei einer Textur/Himmel-Grenze oft *auf der
+  Grenze*, liegt die nahe einem Drittel, gilt die Leere als gewollt.
+- Regressionstests in `ImageStructureTest` (Ende zu Ende durch Saliency + Struktur + Regel).
+Im Emulator: Holzraum gilt als voll strukturiert, Live-Score dadurch bis 100 (vorher ~88-91
+durch Teilabzug der toten Flaeche), Viewer-Bewertung laeuft. **Nicht verifiziert:** echte
+Szenen am Geraet, Kamerarauschen bei wenig Licht (koennte dunkle Flaechen als "Struktur"
+zaehlen — dann warnt die Regel seltener, nicht falsch).
+
+**Drittel-Hinweis ohne Prozent und ohne Kamera-Anweisung (10.10.2026).** Statt "Motiv ca.
+17 % zu weit oben — Kamera etwas nach oben schwenken" jetzt "Motiv etwas zu hoch" / "Motiv
+viel zu hoch" (ebenso zu tief, zu weit links/rechts); "viel" ab 12 % Bildbreite
+(`RuleOfThirdsRule.LARGE_OFFSET_PERCENT`, Mitte↔Drittel sind ~17 %). Anlass: Nutzer las
+"zu weit oben → nach oben schwenken" als Fehler. Die Richtung *war* richtig (Kamera hoch →
+Bildinhalt wandert nach unten) — **nicht umdrehen**, sonst schickt die App jeden in die
+falsche Richtung. Nebeneffekt: weniger Textwechsel, weil sich nicht jede Prozentstufe als
+neuer Hinweis zaehlt. Das Feldtest-Protokoll enthaelt dadurch keine Prozentwerte mehr.
+Noch mit Kamera-Anweisung formuliert (gleiches Missverstaendnis moeglich): Kopf/Kinn/Seite
+angeschnitten (`PortraitFramingRule`), tote Flaeche (`DeadSpaceRule`).
 
 **Build/Run (Android):**
 - `./gradlew :androidApp:assembleDebug` — Debug-APK bauen

@@ -37,11 +37,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.florianhaeglsperger.photocoach.diagnostics.FieldLog
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
+import com.florianhaeglsperger.photocoach.domain.subject.DefaultSubjectResolver
 import com.florianhaeglsperger.photocoach.domain.scoring.CompositionScorer
 import com.florianhaeglsperger.photocoach.domain.scoring.ScoreSmoother
 import com.florianhaeglsperger.photocoach.domain.scoring.Verdict
 import com.florianhaeglsperger.photocoach.domain.scoring.VerdictStabilizer
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.foundation.gestures.detectTapGestures
 
 /** Wie lange die Rueckmeldung nach dem Ausloesen stehen bleibt. */
 private const val FEEDBACK_DURATION_MS = 2500L
@@ -72,9 +77,18 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     // sich nicht beurteilen, ob ein Hinweis stimmt.
     var showGrid by remember { mutableStateOf(true) }
     var frameCount by remember { mutableStateOf(0) }
+    // Rohdaten-Zeile: standardmaessig aus, damit der Sucher ruhig bleibt. Antippen der
+    // Hinweiskarte blendet sie ein — fuer den Geraetetest (Plan 3.5) weiter erreichbar.
+    var showDebug by remember { mutableStateOf(false) }
     // Die Pinch-Geste startet nur einmal und braucht trotzdem den jeweils aktuellen Zustand.
     val latestState by rememberUpdatedState(state)
     var proOpen by remember { mutableStateOf(false) }
+
+    // Tippen zum Scharfstellen: wo, wie weit, und eine laufende Nummer, damit ein spaeter
+    // Bescheid der Kamera nicht einen neueren Tipp ueberschreibt.
+    var focusPoint: FocusPoint? by remember { mutableStateOf(null) }
+    var focusState by remember { mutableStateOf(FocusState.FOCUSING) }
+    var focusTaps by remember { mutableIntStateOf(0) }
     val zoomAnimator = rememberZoomAnimator()
 
     // Letztes Foto: rund neben dem Ausloeser, antippen oeffnet es im Vollbild. Beim Start
@@ -108,8 +122,20 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     LaunchedEffect(activeLens) {
         scorer.reset()
         verdictStabilizer.reset()
+        // Das neue Objektiv startet ohnehin mit Messung ueber das ganze Bild.
+        focusPoint = null
         // Eine noch laufende Zoom-Animation gehoert zur alten Kamera.
         zoomAnimator.cancel()
+    }
+
+    // Ein eingerasteter Fokuspunkt gilt fuer den Bildausschnitt, in dem er angetippt wurde.
+    // Nach dem Zoomen laege er auf etwas anderem — also zurueck zur Messung ueber das ganze Bild.
+    val zoomRatio = (state as? CameraState.Running)?.zoom?.ratio
+    LaunchedEffect(zoomRatio) {
+        if (focusPoint != null) {
+            (latestState as? CameraState.Running)?.resetFocus?.invoke()
+            focusPoint = null
+        }
     }
 
     Box(
@@ -135,7 +161,43 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                             zoomAnimator.cancel()
                             (latestState as? CameraState.Running)?.setZoom?.invoke(it)
                         },
-                    ),
+                    )
+                    // Antippen: Fokus und Belichtung auf diesen Punkt. Lange druecken: zurueck
+                    // auf das ganze Bild. Zwei Finger (Pinch) loesen beides nicht aus — die
+                    // Zoom-Geste verbraucht die Bewegung, und ein Tipp ohne Bewegung ist hier
+                    // per Definition ein Finger.
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { offset ->
+                                val running = latestState as? CameraState.Running ?: return@detectTapGestures
+                                if (!running.canFocusAtPoint) return@detectTapGestures
+                                val x = (offset.x / size.width).coerceIn(0f, 1f)
+                                val y = (offset.y / size.height).coerceIn(0f, 1f)
+                                // Manueller Fokus aus dem Pro-Modus wuerde den Tipp ueberstimmen
+                                // (er schaltet den Autofokus ab). Wer tippt, will scharfstellen.
+                                if (running.manualSettings.focusDiopters != null) {
+                                    running.setManualSettings(running.manualSettings.copy(focusDiopters = null))
+                                }
+                                val id = ++focusTaps
+                                focusPoint = FocusPoint(x, y, id)
+                                focusState = FocusState.FOCUSING
+                                FieldLog.append("Fokus/Belichtung auf ${(x * 100).roundToInt()} % / ${(y * 100).roundToInt()} %")
+                                running.focusAt(x, y) { focused ->
+                                    // Ein spaeter Bescheid zu einem schon abgeloesten Tipp zaehlt nicht.
+                                    if (focusPoint?.id == id) {
+                                        focusState = if (focused) FocusState.FOCUSED else FocusState.UNFOCUSED
+                                    }
+                                }
+                            },
+                            onLongPress = {
+                                val running = latestState as? CameraState.Running ?: return@detectTapGestures
+                                if (focusPoint == null) return@detectTapGestures
+                                running.resetFocus()
+                                focusPoint = null
+                                FieldLog.append("Fokus/Belichtung zurueck auf ganzes Bild")
+                            },
+                        )
+                    },
             ) {
                 CameraPreview(
                     modifier = Modifier.fillMaxSize(),
@@ -159,6 +221,36 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                 // liegen, nicht auf dem Bildschirm. Nur waehrend die Kamera laeuft.
                 if (state is CameraState.Running && showGrid) {
                     ThirdsGrid(modifier = Modifier.fillMaxSize())
+                }
+
+                // Debug (gleicher Schalter wie die Rohdaten-Zeile: Hinweiskarte antippen):
+                // das Motiv, das die Regeln sehen, als Rechteck im Bild.
+                if (state is CameraState.Running && showDebug) {
+                    SubjectDebugOverlay(
+                        subject = analysis?.let { DefaultSubjectResolver.resolve(it) },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+
+                // Ueber dem Raster, im selben Rahmen: der Punkt ist relativ zum Bildausschnitt.
+                val running = state as? CameraState.Running
+                val point = focusPoint
+                // Steht im Pro-Modus manueller Fokus, gilt der Punkt nicht mehr fuer den Fokus.
+                if (running != null && point != null && running.manualSettings.focusDiopters == null) {
+                    FocusIndicator(
+                        point = point,
+                        state = focusState,
+                        // Bei manueller ISO/Verschlusszeit regelt keine Automatik mehr, an die
+                        // sich eine Korrektur richten koennte — dann nur der Ring.
+                        exposure = running.manualCapabilities.exposureCompensation
+                            ?.takeIf { !running.manualSettings.isManualExposure },
+                        exposureIndex = running.manualSettings.exposureCompensation,
+                        onExposureChange = { index ->
+                            (latestState as? CameraState.Running)?.let {
+                                it.setManualSettings(it.manualSettings.copy(exposureCompensation = index))
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -306,7 +398,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                 onClick = { showGrid = !showGrid },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 108.dp, end = 16.dp),
+                    .padding(top = 124.dp, end = 16.dp),
             )
 
             // Unter dem Raster-Knopf, gleiche Groesse: zwei Einstellungen, eine Spalte. Der
@@ -318,20 +410,21 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                 onClick = { proOpen = !proOpen },
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = 160.dp, end = 16.dp)
+                    .padding(top = 172.dp, end = 16.dp)
                     .size(40.dp),
             )
 
             ScoreOverlay(
                 verdict = verdict,
                 score = score,
+                onClick = { showDebug = !showDebug },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 48.dp),
             )
         }
 
-        analysis?.let { current ->
+        analysis?.takeIf { showDebug && state is CameraState.Running }?.let { current ->
             AnalysisDebugBadge(
                 analysis = current,
                 frameCount = frameCount,
@@ -340,7 +433,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                     // Unter das ScoreOverlay geschoben. Das Badge ist weiterhin nuetzlich
                     // fuer den anstehenden Geraetetest (Plan 3.5) — es faellt weg, sobald
                     // dort bestaetigt ist, dass die Daten stimmen.
-                    .padding(start = 16.dp, top = 108.dp),
+                    .padding(start = 16.dp, top = 124.dp, end = 72.dp),
             )
         }
 
