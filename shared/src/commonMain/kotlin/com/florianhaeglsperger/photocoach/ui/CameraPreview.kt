@@ -2,8 +2,10 @@ package com.florianhaeglsperger.photocoach.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.florianhaeglsperger.photocoach.capture.ImageShift
 import com.florianhaeglsperger.photocoach.capture.ManualCapabilities
 import com.florianhaeglsperger.photocoach.capture.ManualSettings
+import com.florianhaeglsperger.photocoach.capture.ObjectSelection
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 
 /**
@@ -84,6 +86,15 @@ sealed interface CameraState {
         val focusAt: (x: Float, y: Float, onResult: (focused: Boolean) -> Unit) -> Unit = { _, _, _ -> },
         /** Zurueck zu Fokus und Belichtung ueber das ganze Bild. */
         val resetFocus: () -> Unit = {},
+        /**
+         * Waehlt das Objekt am Punkt ([x], [y], normiert wie bei [focusAt]) und verfolgt es
+         * ab dann: die Plattform segmentiert fortlaufend neu und meldet das Ergebnis ueber
+         * `onObjectSelection` der [CameraPreview]. Ein neuer Aufruf ersetzt die Auswahl.
+         * Ohne Unterstuetzung (iOS, pausiert) passiert nichts.
+         */
+        val selectObjectAt: (x: Float, y: Float) -> Unit = { _, _ -> },
+        /** Hebt die Objekt-Auswahl auf. */
+        val clearObjectSelection: () -> Unit = {},
     ) : CameraState
 
     /** Kamera konnte nicht gestartet werden (kein Geraet, belegt, Treiberfehler, ...). */
@@ -105,6 +116,28 @@ const val SENSOR_ASPECT_RATIO = 4f / 3f
  * 1× selbsttaetig auf das Ultraweitwinkel um.
  */
 data class CameraZoom(val ratio: Float, val min: Float, val max: Float)
+
+/**
+ * Die Plattform hat *innerhalb* einer Kamera das Objektiv gewechselt — etwa Hauptkamera →
+ * Tele beim Hochzoomen. Anders als bei [LensFacing] bleibt dabei alles gebunden; den
+ * Zeitpunkt waehlt der Kameratreiber selbst. Weil die Objektive nebeneinander sitzen, springt
+ * das Bild dabei um einige Prozent; [shift] ist dieser Sprung, gemessen zwischen dem letzten
+ * Bild der alten und dem ersten der neuen Kamera, oder `null`, wenn er sich nicht messen
+ * liess (zu kontrastarm). Verwenden nur bei [ImageShift.isReliable].
+ *
+ * [fromCamera]/[toCamera] sind Kennungen der Plattform, nur fuers Protokoll. [frameAgeMs]
+ * (wie alt das neue Bild bei fertiger Messung war, `null` = unbekannt) und [frameGapMs]
+ * (Abstand zum Vergleichsbild) dienen der Beurteilung am Geraet.
+ */
+data class LensHandover(
+    val fromCamera: String,
+    val toCamera: String,
+    val zoomRatio: Float,
+    val shift: ImageShift?,
+    val measureMs: Float,
+    val frameAgeMs: Float?,
+    val frameGapMs: Float,
+)
 
 /** Welche der beiden Kameras gerade aktiv ist. */
 enum class LensFacing {
@@ -129,6 +162,13 @@ enum class LensFacing {
  * und immer auf dem Main-Thread, damit die UI es direkt in State schreiben kann. Das ist
  * die Leitung, an der ab Phase 1 das ScoreOverlay haengt.
  *
+ * [onObjectSelection] meldet das per [CameraState.Running.selectObjectAt] gewaehlte Objekt —
+ * in eigenem Takt (so schnell das Segmentierungsmodell es schafft, nicht 10 Hz) und ebenfalls
+ * auf dem Main-Thread. `null`, sobald keine Auswahl mehr besteht.
+ *
+ * [onLensHandover] meldet einen Objektivwechsel innerhalb der Kamera ([LensHandover]),
+ * ebenfalls auf dem Main-Thread — damit die Vorschau den Bildsprung ausgleichen kann.
+ *
  * Implementierungen:
  *  - Android: CameraX (`Preview`-, `ImageAnalysis`- und `ImageCapture`-Use-Case,
  *    Speichern via MediaStore)
@@ -141,4 +181,6 @@ expect fun CameraPreview(
     modifier: Modifier = Modifier,
     onState: (CameraState) -> Unit = {},
     onAnalysis: (FrameAnalysis) -> Unit = {},
+    onObjectSelection: (ObjectSelection?) -> Unit = {},
+    onLensHandover: (LensHandover) -> Unit = {},
 )

@@ -3,6 +3,9 @@ package com.florianhaeglsperger.photocoach.domain.scoring
 import com.florianhaeglsperger.photocoach.domain.CENTER
 import com.florianhaeglsperger.photocoach.domain.faceAt
 import com.florianhaeglsperger.photocoach.domain.frame
+import com.florianhaeglsperger.photocoach.domain.model.ExposureStats
+import com.florianhaeglsperger.photocoach.domain.model.HorizonLine
+import com.florianhaeglsperger.photocoach.domain.pinnedAt
 import com.florianhaeglsperger.photocoach.domain.structure
 import com.florianhaeglsperger.photocoach.domain.TEXTURED
 import com.florianhaeglsperger.photocoach.domain.SMOOTH
@@ -149,5 +152,150 @@ class CompositionScorerTest {
         scorer.reset()
 
         assertEquals(2f / 3f, tracker.select(x = 0.85f, y = CENTER, aspectRatio = 1f).x, 0.01f)
+    }
+
+    @Test
+    fun `angetipptes Motiv bestimmt den Drittel-Hinweis`() {
+        // Gesicht sitzt perfekt auf dem Drittel — der Nutzer hat aber ein Objekt in der
+        // Bildmitte angetippt. Bewertet wird sein Motiv, nicht das Gesicht.
+        val result = CompositionScorer().assess(
+            frame(
+                tiltDegrees = 0f,
+                faces = listOf(faceAt(1f / 3f, 1f / 3f, size = 0.25f)),
+                pinned = pinnedAt(CENTER, CENTER),
+            ),
+        )
+
+        // Mittig angetippt: ein Hinweis zum Motiv (nicht zum Gesicht) — und ohne erfundene
+        // Richtung (bis 19.10.2026 stand hier faelschlich "Motiv viel zu tief").
+        val hint = assertNotNull(hintOf(result))
+        assertTrue(hint.startsWith("Motiv in der Bildmitte"), "kam: $hint")
+    }
+
+    @Test
+    fun `angetipptes Motiv macht aus kein Motiv eine Bewertung`() {
+        // Ohne Gesicht und Saliency gab es bisher nur "Kein klares Motiv erkannt".
+        val result = CompositionScorer().assess(frame(tiltDegrees = 0f, pinned = pinnedAt(1f / 3f, 1f / 3f)))
+
+        assertEquals(Verdict.Good, result.verdict)
+        assertNotNull(result.score)
+    }
+
+    // --- Sucher: Platzierung erst nach dem Antippen (placementNeedsPinnedSubject) ---
+
+    private val viewfinder get() = CompositionScorer(placementNeedsPinnedSubject = true)
+
+    @Test
+    fun `Sucher ohne Tipp - kein Drittel-Hinweis und kein Score`() {
+        // Derselbe Fall wie "Motiv nur aus Saliency": dort gibt es einen Drittel-Hinweis.
+        val saliency = listOf(subjectAt(0.12f, 0.5f), subjectAt(0.14f, 0.52f), subjectAt(0.12f, 0.48f))
+
+        val result = viewfinder.assess(frame(tiltDegrees = 0f, saliency = saliency, aspectRatio = 1f))
+
+        assertEquals(Verdict.AwaitingSubject, result.verdict)
+        assertNull(result.score)
+    }
+
+    @Test
+    fun `Sucher ohne Tipp - angeschnittener Kopf wird trotzdem gemeldet`() {
+        // Kein Platzierungs-Tipp, sondern ein Fehler, der sich hinterher nicht reparieren
+        // laesst — gilt auch ohne angetipptes Motiv (Stufe-1-Tipps, 18.10.2026).
+        val result = viewfinder.assess(frame(tiltDegrees = 0f, faces = listOf(faceAt(CENTER, 0.04f, size = 0.2f))))
+
+        assertTrue(assertNotNull(hintOf(result)).startsWith("Kopf"), "kam: ${hintOf(result)}")
+        assertNull(result.score)
+    }
+
+    @Test
+    fun `Sucher ohne Tipp - schiefer Horizont wird trotzdem gemeldet`() {
+        val result = viewfinder.assess(frame(tiltDegrees = 12f))
+
+        assertTrue(assertNotNull(hintOf(result)).startsWith("Horizont"), "kam: ${hintOf(result)}")
+        assertNull(result.score)
+    }
+
+    @Test
+    fun `Sucher ohne Tipp - angeschnittener Kopf geht vor schiefem Horizont`() {
+        val result = viewfinder.assess(frame(tiltDegrees = 12f, faces = listOf(faceAt(CENTER, 0.04f, size = 0.2f))))
+
+        assertTrue(assertNotNull(hintOf(result)).startsWith("Kopf"), "kam: ${hintOf(result)}")
+    }
+
+    @Test
+    fun `Sucher ohne Tipp - Ueberbelichtung wird gemeldet und geht vor dem Horizont`() {
+        val result = viewfinder.assess(
+            frame(tiltDegrees = 12f).copy(exposure = ExposureStats(overexposedFraction = 0.3f, underexposedFraction = 0f, meanBrightness = 0.7f)),
+        )
+
+        assertEquals("Helle Bereiche überbelichtet — Belichtung verringern", hintOf(result))
+    }
+
+    @Test
+    fun `Sucher ohne Tipp - Kameraneigung wird gemeldet`() {
+        val result = viewfinder.assess(frame(tiltDegrees = 0f).copy(cameraPitchDegrees = 25f))
+
+        assertEquals("Kamera nach oben geneigt — gerade halten, sonst kippen Linien", hintOf(result))
+    }
+
+    @Test
+    fun `Belichtung und Neigung aendern den Score nicht`() {
+        // Der Score bewertet die Komposition. Ein ueberbelichteter Himmel macht sie nicht schlechter.
+        val base = frame(tiltDegrees = 0f, faces = listOf(faceAt(1f / 3f, 1f / 3f, size = 0.25f)))
+        val plain = CompositionScorer().assess(base)
+        val bright = CompositionScorer().assess(
+            base.copy(cameraPitchDegrees = 25f, exposure = ExposureStats(0.3f, 0f, 0.7f)),
+        )
+
+        assertEquals(plain.score, bright.score)
+        assertIs<Verdict.Fix>(bright.verdict)
+    }
+
+    @Test
+    fun `Sucher ohne Tipp - tote Flaeche wird trotzdem gemeldet`() {
+        val result = viewfinder.assess(
+            frame(tiltDegrees = 0f, structure = structure { _, row -> if (row >= 6) TEXTURED else SMOOTH }),
+        )
+
+        assertEquals("Obere Bildhälfte fast leer — Kamera etwas nach unten schwenken.", hintOf(result))
+    }
+
+    @Test
+    fun `Sucher mit Tipp - Platzierung wird wie gewohnt bewertet`() {
+        val result = viewfinder.assess(frame(tiltDegrees = 0f, pinned = pinnedAt(CENTER, CENTER)))
+
+        assertTrue(assertNotNull(hintOf(result)).startsWith("Motiv in der Bildmitte"), "kam: ${hintOf(result)}")
+        assertNotNull(result.score)
+    }
+
+    @Test
+    fun `Sucher - Tipp aufheben bringt wieder die neutrale Aussage`() {
+        val scorer = viewfinder
+        scorer.assess(frame(tiltDegrees = 0f, pinned = pinnedAt(CENTER, CENTER)))
+
+        assertEquals(Verdict.AwaitingSubject, scorer.assess(frame(tiltDegrees = 0f)).verdict)
+    }
+
+    @Test
+    fun `Sucher ohne Tipp - Horizont in der Bildmitte wird gemeldet`() {
+        val result = viewfinder.assess(
+            frame(tiltDegrees = 0f, aspectRatio = 0.75f).copy(horizonLine = HorizonLine(0.5f, 0.5f, strength = 0.2f)),
+        )
+
+        assertEquals("Horizont in der Bildmitte — ins obere oder untere Drittel legen", hintOf(result))
+    }
+
+    @Test
+    fun `Horizont mittig geht vor der leeren Bildhaelfte`() {
+        // Klassischer Fall: Horizont in der Mitte, darueber leerer Himmel. Beide Regeln
+        // greifen; der Horizont-Hinweis sagt, was zu tun ist.
+        val result = viewfinder.assess(
+            frame(
+                tiltDegrees = 0f,
+                aspectRatio = 0.75f,
+                structure = structure { _, row -> if (row >= 6) TEXTURED else SMOOTH },
+            ).copy(horizonLine = HorizonLine(0.5f, 0.5f, strength = 0.2f)),
+        )
+
+        assertTrue(assertNotNull(hintOf(result)).startsWith("Horizont in der Bildmitte"), "kam: ${hintOf(result)}")
     }
 }

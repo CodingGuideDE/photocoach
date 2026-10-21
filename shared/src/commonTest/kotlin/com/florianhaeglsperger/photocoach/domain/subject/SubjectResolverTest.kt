@@ -3,6 +3,7 @@ package com.florianhaeglsperger.photocoach.domain.subject
 import com.florianhaeglsperger.photocoach.domain.CENTER
 import com.florianhaeglsperger.photocoach.domain.faceAt
 import com.florianhaeglsperger.photocoach.domain.frame
+import com.florianhaeglsperger.photocoach.domain.pinnedAt
 import com.florianhaeglsperger.photocoach.domain.subjectAt
 import kotlin.math.abs
 import kotlin.test.Test
@@ -134,5 +135,48 @@ class SubjectResolverTest {
         // Einzelner Punkt in der Mitte: trotzdem ein sichtbares Rechteck.
         val single = assertNotNull(resolver.resolve(frame(saliency = listOf(subjectAt(0.5f, 0.5f)), aspectRatio = 1f)))
         assertTrue(assertNotNull(single.bounds).right - single.bounds!!.left > 0f)
+    }
+
+    // --- Angetipptes Motiv --------------------------------------------------------------
+
+    @Test
+    fun `angetipptes Motiv liefert seinen Schwerpunkt`() {
+        val subject = assertNotNull(resolver.resolve(frame(pinned = pinnedAt(0.7f, 0.6f))))
+
+        assertEquals(0.7f, subject.x, 0.001f)
+        assertEquals(0.6f, subject.y, 0.001f)
+        assertEquals(SubjectSource.PINNED, subject.source)
+        assertEquals(1f, subject.confidence)
+    }
+
+    @Test
+    fun `angetipptes Motiv schlaegt Gesicht und Saliency`() {
+        // Gruppenfoto: die App wuerde das groesste Gesicht nehmen — der Nutzer hat aber
+        // jemand anderen angetippt. Seine Wahl gilt.
+        val subject = resolver.resolve(
+            frame(
+                faces = listOf(faceAt(0.3f, 0.4f, size = 0.3f)),
+                saliency = listOf(subjectAt(0.5f, 0.5f), subjectAt(0.52f, 0.5f), subjectAt(0.5f, 0.52f)),
+                pinned = pinnedAt(0.8f, 0.7f),
+            ),
+        )
+
+        assertEquals(SubjectSource.PINNED, assertNotNull(subject).source)
+        assertEquals(0.8f, subject.x, 0.001f)
+    }
+
+    @Test
+    fun `angetipptes Motiv bringt seinen Rahmen fuer die Anzeige mit`() {
+        val bounds = assertNotNull(resolver.resolve(frame(pinned = pinnedAt(0.5f, 0.5f, size = 0.4f)))?.bounds)
+
+        assertEquals(0.3f, bounds.left, 0.001f)
+        assertEquals(0.7f, bounds.bottom, 0.001f)
+    }
+
+    @Test
+    fun `ohne Antippen bleibt alles beim Alten`() {
+        val subject = resolver.resolve(frame(faces = listOf(faceAt(0.25f, 0.4f))))
+
+        assertEquals(SubjectSource.FACE, assertNotNull(subject).source)
     }
 }

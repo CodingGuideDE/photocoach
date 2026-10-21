@@ -53,4 +53,17 @@
         android:name="android.permission.ACCESS_NETWORK_STATE"
         tools:node="remove" />
 
+    <!--
+      INTERNET kommt ueber com.google.android.datatransport herein — Googles Uebertragung
+      von Nutzungsstatistiken, die sowohl ML Kit (face-detection) als auch MediaPipe
+      (tasks-core) mitbringen. Beide rechnen vollstaendig on-device und brauchen kein Netz;
+      ohne die Berechtigung laeuft nur das Senden der Statistik ins Leere. Mit ihr stuende
+      Netzwerkzugriff im Play-Store-Eintrag — das Gegenteil des on-device-Versprechens.
+      (War seit dem Einbau von ML Kit unbemerkt drin; gefunden 12.10.2026 beim Einbau von
+      MediaPipe.)
+    -->
+    <uses-permission
+        android:name="android.permission.INTERNET"
+        tools:node="remove" />
+
 </manifest>

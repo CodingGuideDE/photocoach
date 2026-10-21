@@ -1,9 +1,14 @@
 package com.florianhaeglsperger.photocoach.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -21,35 +26,49 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.florianhaeglsperger.photocoach.capture.ObjectSelection
 import com.florianhaeglsperger.photocoach.diagnostics.FieldLog
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
-import com.florianhaeglsperger.photocoach.domain.subject.DefaultSubjectResolver
+import com.florianhaeglsperger.photocoach.domain.model.PinnedSubject
 import com.florianhaeglsperger.photocoach.domain.scoring.CompositionScorer
 import com.florianhaeglsperger.photocoach.domain.scoring.ScoreSmoother
 import com.florianhaeglsperger.photocoach.domain.scoring.Verdict
 import com.florianhaeglsperger.photocoach.domain.scoring.VerdictStabilizer
-import kotlinx.coroutines.delay
+import com.florianhaeglsperger.photocoach.domain.subject.DefaultSubjectResolver
 import kotlin.math.roundToInt
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.foundation.gestures.detectTapGestures
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /** Wie lange die Rueckmeldung nach dem Ausloesen stehen bleibt. */
 private const val FEEDBACK_DURATION_MS = 2500L
+
+/**
+ * Wie lange die Vorschau nach einem Objektivwechsel (Haupt ↔ Tele) braucht, um vom
+ * ausgeglichenen Versatz in ihre normale Lage zu gleiten. Gleich lang wie eine Zoom-Animation:
+ * kuerzer wirkt wie ein zweiter, kleinerer Sprung, laenger wie ein Nachziehen.
+ */
+private const val LENS_HANDOVER_GLIDE_MS = ZOOM_ANIMATION_MS
 
 /**
  * Der Sucher-Screen: Live-Vorschau, Ausloeser und eine Statusflaeche darueber.
@@ -64,13 +83,14 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     var capturing by remember { mutableStateOf(false) }
     var feedback: CaptureResult? by remember { mutableStateOf(null) }
     var analysis: FrameAnalysis? by remember { mutableStateOf(null) }
-    var verdict: Verdict by remember { mutableStateOf(Verdict.NoSubject) }
+    var verdict: Verdict by remember { mutableStateOf(Verdict.AwaitingSubject) }
     var score: Int? by remember { mutableStateOf(null) }
     val hint = (verdict as? Verdict.Fix)?.hint
 
     // Alle drei halten Zustand ueber Frames hinweg (Hysterese, Mindestanzeigezeit,
     // Glaettung) und gehoeren deshalb an den Screen, nicht in den Callback.
-    val scorer = remember { CompositionScorer() }
+    // Im Sucher: Hinweise zur Platzierung erst nach dem Antippen eines Motivs.
+    val scorer = remember { CompositionScorer(placementNeedsPinnedSubject = true) }
     val verdictStabilizer = remember { VerdictStabilizer() }
     val scoreSmoother = remember { ScoreSmoother() }
     // Beim Feldtest (Plan 3.5) standardmaessig an: ohne sichtbare Drittel-Linien laesst
@@ -83,13 +103,23 @@ fun CameraScreen(modifier: Modifier = Modifier) {
     // Die Pinch-Geste startet nur einmal und braucht trotzdem den jeweils aktuellen Zustand.
     val latestState by rememberUpdatedState(state)
     var proOpen by remember { mutableStateOf(false) }
+    // Hoehe des Stapels aus Zoomleiste und Pro-Panel — die Speicher-Rueckmeldung steht darueber.
+    var bottomControlsHeight by remember { mutableStateOf(0) }
 
     // Tippen zum Scharfstellen: wo, wie weit, und eine laufende Nummer, damit ein spaeter
     // Bescheid der Kamera nicht einen neueren Tipp ueberschreibt.
     var focusPoint: FocusPoint? by remember { mutableStateOf(null) }
+    // Das per Tipp gewaehlte Objekt. Solange es erkannt ist, ist es das Motiv der Bewertung
+    // (FrameAnalysis.pinnedSubject) — siehe ObjectBoxOverlay.
+    var objectSelection: ObjectSelection? by remember { mutableStateOf(null) }
     var focusState by remember { mutableStateOf(FocusState.FOCUSING) }
     var focusTaps by remember { mutableIntStateOf(0) }
     val zoomAnimator = rememberZoomAnimator()
+    // Objektivwechsel innerhalb der Kamera (Haupt ↔ Tele): um so viel ist die Vorschau gerade
+    // gegen den Bildsprung verschoben (Anteil der Rahmenbreite/-hoehe). Nach jedem Wechsel
+    // gleitet sie auf 0 zurueck — aus dem Sprung wird eine kurze Bewegung.
+    val handoverOffset = remember { Animatable(Offset.Zero, Offset.VectorConverter) }
+    val handoverScope = rememberCoroutineScope()
 
     // Letztes Foto: rund neben dem Ausloeser, antippen oeffnet es im Vollbild. Beim Start
     // wird das juengste schon vorhandene Foto der App gesucht, danach ersetzt jede neue
@@ -124,8 +154,13 @@ fun CameraScreen(modifier: Modifier = Modifier) {
         verdictStabilizer.reset()
         // Das neue Objektiv startet ohnehin mit Messung ueber das ganze Bild.
         focusPoint = null
+        // Das fixierte Motiv lag im Bild der alten Kamera.
+        (latestState as? CameraState.Running)?.clearObjectSelection()
+        objectSelection = null
         // Eine noch laufende Zoom-Animation gehoert zur alten Kamera.
         zoomAnimator.cancel()
+        // Ebenso ein noch laufender Ausgleich eines Objektivwechsels.
+        handoverOffset.snapTo(Offset.Zero)
     }
 
     // Ein eingerasteter Fokuspunkt gilt fuer den Bildausschnitt, in dem er angetippt wurde.
@@ -135,6 +170,12 @@ fun CameraScreen(modifier: Modifier = Modifier) {
         if (focusPoint != null) {
             (latestState as? CameraState.Running)?.resetFocus?.invoke()
             focusPoint = null
+        }
+        // Gleiches fuer das fixierte Motiv: nachgefuehrt wird es am letzten Schwerpunkt im
+        // *Bildausschnitt* — nach dem Zoomen laege der auf anderem Inhalt.
+        if (objectSelection != null) {
+            (latestState as? CameraState.Running)?.clearObjectSelection()
+            objectSelection = null
         }
     }
 
@@ -154,6 +195,9 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .align(Alignment.Center)
                     .aspectRatio(aspect)
+                    // Waehrend des Ausgleichs nach einem Objektivwechsel ist die Vorschau
+                    // verschoben — sie darf dabei nicht ueber den Rahmen hinaus zeichnen.
+                    .clipToBounds()
                     .pinchToZoom(
                         currentZoom = { (latestState as? CameraState.Running)?.zoom },
                         onZoom = {
@@ -170,9 +214,12 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                         detectTapGestures(
                             onTap = { offset ->
                                 val running = latestState as? CameraState.Running ?: return@detectTapGestures
-                                if (!running.canFocusAtPoint) return@detectTapGestures
                                 val x = (offset.x / size.width).coerceIn(0f, 1f)
                                 val y = (offset.y / size.height).coerceIn(0f, 1f)
+                                // Ein Tipp waehlt zugleich das Objekt an dieser Stelle (Test der
+                                // Tipp-Segmentierung) — auch ohne Fokus-Unterstuetzung.
+                                running.selectObjectAt(x, y)
+                                if (!running.canFocusAtPoint) return@detectTapGestures
                                 // Manueller Fokus aus dem Pro-Modus wuerde den Tipp ueberstimmen
                                 // (er schaltet den Autofokus ab). Wer tippt, will scharfstellen.
                                 if (running.manualSettings.focusDiopters != null) {
@@ -191,6 +238,7 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                             },
                             onLongPress = {
                                 val running = latestState as? CameraState.Running ?: return@detectTapGestures
+                                running.clearObjectSelection()
                                 if (focusPoint == null) return@detectTapGestures
                                 running.resetFocus()
                                 focusPoint = null
@@ -200,9 +248,40 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                     },
             ) {
                 CameraPreview(
-                    modifier = Modifier.fillMaxSize(),
+                    // Nur die Vorschau gleitet, nicht das Raster: das zeigt den Ausschnitt des
+                    // Fotos, und der springt nicht. Fokusring und Objektrahmen sind beim
+                    // Wechsel ohnehin weg (jede Zoomaenderung hebt sie auf, siehe oben).
+                    modifier = Modifier.fillMaxSize().graphicsLayer {
+                        translationX = handoverOffset.value.x * size.width
+                        translationY = handoverOffset.value.y * size.height
+                    },
                     onState = { state = it },
-                    onAnalysis = {
+                    onLensHandover = { handover ->
+                        val shift = handover.shift?.takeIf { it.isReliable }
+                        FieldLog.append(handover.logLine(compensated = shift != null))
+                        if (shift != null) {
+                            handoverScope.launch {
+                                // Der neue Inhalt liegt um shift versetzt — die Vorschau also
+                                // um genau das zurueck, dann weich in die Ruhelage. Vom aktuellen
+                                // Stand aus, falls der vorige Ausgleich noch laeuft.
+                                handoverOffset.snapTo(handoverOffset.value - Offset(shift.dx, shift.dy))
+                                handoverOffset.animateTo(
+                                    Offset.Zero,
+                                    tween(LENS_HANDOVER_GLIDE_MS, easing = FastOutSlowInEasing),
+                                )
+                            }
+                        }
+                    },
+                    onObjectSelection = { selection ->
+                        logPinChange(objectSelection, selection)
+                        // Neues Motiv angetippt: der alte Drittel-Zielpunkt gehoert zum alten.
+                        if (selection is ObjectSelection.Searching) scorer.reset()
+                        objectSelection = selection
+                    },
+                    onAnalysis = { raw ->
+                        // Das fixierte Motiv geht mit in die Analyse, damit *alle* Regeln
+                        // dasselbe Motiv sehen (Drittel, tote Flaeche, Debug-Rechteck).
+                        val it = raw.copy(pinnedSubject = objectSelection.pinnedSubject())
                         analysis = it
                         val assessment = scorer.assess(it)
                         val next = verdictStabilizer.update(assessment.verdict, it.timestampMs)
@@ -229,6 +308,16 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                     SubjectDebugOverlay(
                         subject = analysis?.let { DefaultSubjectResolver.resolve(it) },
                         modifier = Modifier.fillMaxSize(),
+                    )
+                }
+
+                // Testhilfe Tipp-Segmentierung: Rahmen um das erkannte Objekt.
+                if (state is CameraState.Running) {
+                    ObjectBoxOverlay(
+                        selection = objectSelection,
+                        onClear = { (latestState as? CameraState.Running)?.clearObjectSelection() },
+                        modifier = Modifier.fillMaxSize(),
+                        showDetails = showDebug,
                     )
                 }
 
@@ -292,18 +381,26 @@ fun CameraScreen(modifier: Modifier = Modifier) {
 
             // Laeuft — freie Sicht auf das Motiv, nur der Ausloeser am unteren Rand.
             is CameraState.Running -> {
-                // Pro-Panel und Zoomleiste teilen sich denselben Platz ueber dem Ausloeser.
-                // Zoomen geht bei offenem Panel weiter per Pinch.
-                if (proOpen) {
-                    ProPanel(
-                        capabilities = current.manualCapabilities,
-                        settings = current.manualSettings,
-                        onChange = current.setManualSettings,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 132.dp),
-                    )
-                } else {
+                // Ueber dem Ausloeser gestapelt: unten die Zoomleiste, darueber — wenn offen —
+                // das Pro-Panel. Die Zoomleiste bleibt dabei immer an derselben Stelle; frueher
+                // verdraengte das Panel sie, und Zoomen ging im Pro-Modus nur noch per Pinch.
+                // Hat die Kamera keine Zoomstufen, faellt die Leiste weg und das Panel rueckt
+                // nach unten (ZoomBar zeichnet dann nichts, spacedBy laesst keine Luecke).
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 132.dp)
+                        .onSizeChanged { bottomControlsHeight = it.height },
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    if (proOpen) {
+                        ProPanel(
+                            capabilities = current.manualCapabilities,
+                            settings = current.manualSettings,
+                            onChange = current.setManualSettings,
+                        )
+                    }
                     ZoomBar(
                         zoom = current.zoom,
                         lensFacing = current.lensFacing,
@@ -313,9 +410,6 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                                 (latestState as? CameraState.Running)?.setZoom?.invoke(it)
                             }
                         },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 132.dp),
                     )
                 }
 
@@ -384,8 +478,8 @@ fun CameraScreen(modifier: Modifier = Modifier) {
                 result = result,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    // Ueber dem offenen Pro-Panel, sonst verdeckt es die Regler.
-                    .padding(bottom = if (proOpen) 330.dp else 200.dp),
+                    // Ueber Zoomleiste und (offenem) Pro-Panel, sonst verdeckt es die Regler.
+                    .padding(bottom = 132.dp + with(LocalDensity.current) { bottomControlsHeight.toDp() } + 12.dp),
             )
         }
 
@@ -651,5 +745,56 @@ private fun LensToggle(
                 drawCircle(color, radius = size.width * 0.13f, center = center, style = Stroke(stroke * 0.8f))
             }
         }
+    }
+}
+
+/**
+ * Das fixierte Motiv fuer die Bewertung: nur ein erkanntes Objekt zaehlt. Waehrend der ersten
+ * Erkennung, nach dem Verlieren oder ohne Modell entscheidet wieder die automatische
+ * Motivwahl — lieber kurz automatisch als an einer Stelle festhalten, an der nichts mehr ist.
+ */
+private fun ObjectSelection?.pinnedSubject(): PinnedSubject? {
+    val obj = (this as? ObjectSelection.Found)?.obj ?: return null
+    return PinnedSubject(obj.left, obj.top, obj.right, obj.bottom, obj.centerX, obj.centerY)
+}
+
+/** Feldtest-Protokoll: nur die Uebergaenge (fixiert / verloren / aufgehoben), nicht jedes Nachfuehren. */
+/**
+ * Protokollzeile zu einem Objektivwechsel, z. B.
+ * "Objektivwechsel 56 → 52 bei 2,9×: Versatz +1,8 % / −0,6 %, ausgeglichen
+ * (Korrelation 62 %, Eindeutigkeit 14,1, Messung 0,8 ms, Bildalter 31 ms, Abstand 33 ms)".
+ * Die Kennwerte sind fuer die Kalibrierung der Schwellen in `ImageRegistration`.
+ */
+private fun LensHandover.logLine(compensated: Boolean): String {
+    val head = "Objektivwechsel $fromCamera → $toCamera bei ${formatZoom(zoomRatio)}"
+    val details = "Messung ${measureMs.tenths()} ms, " +
+        "Bildalter ${frameAgeMs?.roundToInt()?.let { "$it ms" } ?: "?"}, " +
+        "Abstand ${frameGapMs.roundToInt()} ms"
+    val s = shift ?: return "$head: kein Versatz messbar (zu kontrastarm) ($details)"
+    return "$head: Versatz ${(s.dx * 100).tenths(signed = true)} % / ${(s.dy * 100).tenths(signed = true)} %, " +
+        (if (compensated) "ausgeglichen" else "nicht ausgeglichen") +
+        " (Korrelation ${(s.confidence * 100).roundToInt()} %, " +
+        "Eindeutigkeit ${s.distinctness.coerceAtMost(999f).tenths()}, $details)"
+}
+
+/** Eine Nachkommastelle mit deutschem Komma, optional mit Vorzeichen. */
+private fun Float.tenths(signed: Boolean = false): String {
+    val t = (this * 10).roundToInt()
+    val sign = when {
+        t < 0 -> "−"
+        signed && t > 0 -> "+"
+        else -> ""
+    }
+    val a = kotlin.math.abs(t)
+    return "$sign${a / 10},${a % 10}"
+}
+
+private fun logPinChange(before: ObjectSelection?, after: ObjectSelection?) {
+    val wasPinned = before is ObjectSelection.Found
+    when {
+        after is ObjectSelection.Found && !wasPinned ->
+            FieldLog.append("Motiv fixiert (${(after.obj.centerX * 100).roundToInt()} % / ${(after.obj.centerY * 100).roundToInt()} %)")
+        after is ObjectSelection.Lost && wasPinned -> FieldLog.append("Fixiertes Motiv verloren")
+        after == null && before != null -> FieldLog.append("Motiv-Fixierung aufgehoben")
     }
 }

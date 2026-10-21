@@ -2,6 +2,7 @@ package com.florianhaeglsperger.photocoach.domain
 
 import com.florianhaeglsperger.photocoach.domain.model.FaceRect
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
+import com.florianhaeglsperger.photocoach.domain.model.PinnedSubject
 import com.florianhaeglsperger.photocoach.domain.model.SaliencyPoint
 import com.florianhaeglsperger.photocoach.domain.model.StructureGrid
 
@@ -43,6 +44,7 @@ fun frame(
     timestampMs: Long = 0L,
     aspectRatio: Float = LANDSCAPE_16_9,
     structure: StructureGrid? = null,
+    pinned: PinnedSubject? = null,
 ): FrameAnalysis = FrameAnalysis(
     horizonTiltDegrees = tiltDegrees,
     saliencyRegions = saliency,
@@ -50,7 +52,12 @@ fun frame(
     timestampMs = timestampMs,
     aspectRatio = aspectRatio,
     structure = structure,
+    pinnedSubject = pinned,
 )
+
+/** Ein angetipptes Motiv mit Schwerpunkt ([x], [y]) und quadratischem Rahmen der Kantenlaenge [size]. */
+fun pinnedAt(x: Float, y: Float, size: Float = 0.2f): PinnedSubject =
+    PinnedSubject(x - size / 2f, y - size / 2f, x + size / 2f, y + size / 2f, centerX = x, centerY = y)
 
 /** Struktur-Wert fuer "hier ist deutlich etwas" — klar ueber der Schwelle der DeadSpaceRule. */
 const val TEXTURED = 0.1f

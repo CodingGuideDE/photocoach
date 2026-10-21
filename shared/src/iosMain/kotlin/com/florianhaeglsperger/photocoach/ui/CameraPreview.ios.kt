@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.florianhaeglsperger.photocoach.capture.ObjectSelection
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 import kotlinx.cinterop.ExperimentalForeignApi
 import platform.AVFoundation.AVAuthorizationStatusAuthorized
@@ -40,6 +41,12 @@ actual fun CameraPreview(
     modifier: Modifier,
     onState: (CameraState) -> Unit,
     onAnalysis: (FrameAnalysis) -> Unit,
+    // Tipp-Segmentierung gibt es auf iOS (noch) nicht: MediaPipe bietet den Interactive
+    // Segmenter dort nicht an; Gegenstueck waere Vision (VNGenerateForegroundInstanceMaskRequest).
+    @Suppress("UNUSED_PARAMETER") onObjectSelection: (ObjectSelection?) -> Unit,
+    // Objektivwechsel innerhalb der Kamera wird auf iOS (pausiert) nicht erkannt. Gegenstueck
+    // waere AVCaptureDevice.activePrimaryConstituent einer virtuellen Mehrfachkamera.
+    @Suppress("UNUSED_PARAMETER") onLensHandover: (LensHandover) -> Unit,
 ) {
     var state by remember { mutableStateOf<CameraState>(CameraState.Initializing) }
 

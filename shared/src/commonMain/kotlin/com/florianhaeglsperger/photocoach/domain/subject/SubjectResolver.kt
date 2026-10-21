@@ -15,9 +15,12 @@ fun interface SubjectResolver {
  * Vorgabe-Implementierung (Plan 3.2.1, Schritt 2).
  *
  * Reihenfolge:
- *  1. Gesicht ab [MIN_FACE_WIDTH] Breite → dessen Mittelpunkt, `confidence = 1`
- *  2. sonst der staerkste Saliency-Klumpen, falls er ausgepraegt genug ist
- *  3. sonst `null`
+ *  1. Vom Nutzer angetipptes Motiv ([FrameAnalysis.pinnedSubject]) → dessen Schwerpunkt,
+ *     `confidence = 1`. Vor dem Gesicht: tippt jemand bei einem Gruppenfoto die zweite
+ *     Person an oder bei einem Portraet den Gegenstand im Vordergrund, ist *das* sein Motiv.
+ *  2. Gesicht ab [MIN_FACE_WIDTH] Breite → dessen Mittelpunkt, `confidence = 1`
+ *  3. sonst der staerkste Saliency-Klumpen, falls er ausgepraegt genug ist
+ *  4. sonst `null`
  *
  * **Warum Saliency nicht einfach "Liste nicht leer" heisst:** Die Gewichte kommen normiert
  * auf das Maximum des jeweiligen Frames herein (siehe `readHeatmap` in iosMain). Die
@@ -54,7 +57,18 @@ object DefaultSubjectResolver : SubjectResolver {
     private const val MIN_BOUNDS_HALF_SIZE = 0.03f
 
     override fun resolve(analysis: FrameAnalysis): SubjectPoint? =
-        resolveFromFace(analysis) ?: resolveFromSaliency(analysis)
+        resolveFromPin(analysis) ?: resolveFromFace(analysis) ?: resolveFromSaliency(analysis)
+
+    private fun resolveFromPin(analysis: FrameAnalysis): SubjectPoint? {
+        val pin = analysis.pinnedSubject ?: return null
+        return SubjectPoint(
+            x = pin.centerX,
+            y = pin.centerY,
+            confidence = 1f,
+            source = SubjectSource.PINNED,
+            bounds = SubjectBounds(pin.left, pin.top, pin.right, pin.bottom),
+        )
+    }
 
     private fun resolveFromFace(analysis: FrameAnalysis): SubjectPoint? {
         val face = analysis.faces

@@ -18,6 +18,16 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Nur arm64: MediaPipe bringt native Bibliotheken fuer vier Architekturen mit
+            // (~48 MB). Emulator (sdk_gphone64_arm64) und Testgeraet sind beide arm64; die
+            // uebrigen drei liessen das Debug-APK auf 130 MB wachsen, und der Emulator hatte
+            // dafuer keinen Platz mehr. Release bleibt unbeschraenkt (Play liefert ohnehin
+            // pro Geraet nur die passende Architektur aus).
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
+        }
         release {
             isMinifyEnabled = false
         }
@@ -30,6 +40,13 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    // MediaPipe liest Modelle direkt aus dem APK (Memory-Mapping) — das geht nur, wenn sie
+    // unkomprimiert drinliegen. Muss hier im App-Modul stehen: im shared-Modul (Bibliothek)
+    // wirkt die Einstellung nicht auf das Packen des APKs.
+    androidResources {
+        noCompress += "task"
     }
 }
 

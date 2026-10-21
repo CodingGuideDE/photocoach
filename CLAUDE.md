@@ -86,6 +86,12 @@ klein, was zum on-device-Versprechen der App gehoert:
 Ergebnis nach dem Merge: auf Geraeten ab API 29 fordert die App nur noch CAMERA an. Wer
 hier Dependencies ergaenzt, sollte das gemergte Manifest gegenpruefen
 (`androidApp/build/intermediates/merged_manifest/debug/.../AndroidManifest.xml`).
+- `INTERNET` wird ebenfalls per `tools:node="remove"` entfernt (seit 12.10.2026). Kommt
+  ueber `com.google.android.datatransport` (Googles Uebertragung von Nutzungsstatistiken),
+  das **ML Kit und MediaPipe** mitbringen. Stand **unbemerkt seit dem Einbau von ML Kit**
+  im gemergten Manifest — die Aussage "nur CAMERA" oben war bis dahin falsch. Beide
+  Bibliotheken rechnen ohne Netz; nur das Senden der Statistik laeuft ins Leere (im
+  Emulator kein Absturz beobachtet).
 
 **iOS-Targets sind aktiv, App laeuft im Simulator** (verifiziert: iPhone 17, iOS 26.5).
 `CameraPreview.ios.kt` prueft die Kamera-Berechtigung echt (Systemdialog getestet), erkennt
@@ -395,7 +401,10 @@ Emulator-Kamera. **Ob das Bild auf echter Hardware weich zoomt, ist noch nicht g
 **Pro-Modus (30.09.2026).** `PRO`-Knopf (seit 05.10.2026 oben rechts unter dem
 Raster-Knopf, gleiche Groesse 40 dp; der Platz links vom Ausloeser gehoert jetzt der
 Foto-Vorschau) oeffnet ein Panel
-(ersetzt solange die Zoomleiste, Pinch geht weiter): Belichtungskorrektur (EV), ISO,
+ueber der Zoomleiste (seit 16.10.2026 gestapelt in einer `Column` ueber dem Ausloeser — die
+Zoomleiste bleibt bei offenem Panel an ihrem Platz und bedienbar; vorher verdraengte das Panel
+sie und Zoomen ging nur per Pinch. Ohne Zoomstufen rueckt das Panel an den Ausloeser; die
+Speicher-Rueckmeldung richtet sich nach der gemessenen Stapelhoehe): Belichtungskorrektur (EV), ISO,
 Verschlusszeit, Weissabgleich (Voreinstellungen), manueller Fokus. Der Knopf wird gelb,
 sobald irgendetwas nicht auf Automatik steht, auch bei geschlossenem Panel.
 - `capture/ManualSettings.kt` (commonMain): `ManualSettings`, `ManualCapabilities`,
@@ -638,7 +647,211 @@ neuer Hinweis zaehlt. Das Feldtest-Protokoll enthaelt dadurch keine Prozentwerte
 Noch mit Kamera-Anweisung formuliert (gleiches Missverstaendnis moeglich): Kopf/Kinn/Seite
 angeschnitten (`PortraitFramingRule`), tote Flaeche (`DeadSpaceRule`).
 
+**Tipp-Segmentierung (Testhilfe, 12.10.2026).** Ein Tipp in den Sucher waehlt zusaetzlich
+zu Fokus/Belichtung das Objekt an der Stelle; ein tuerkiser Rahmen zeigt, was das Modell
+erkannt hat, das Etikett Flaechenanteil und Dauer der letzten Erkennung. Langes Druecken
+oder "×" hebt die Auswahl auf. Zweck: am Geraet beurteilen, ob Treffsicherheit und Tempo
+fuer "angetipptes Motiv verfolgen" reichen.
+- **Modell:** MediaPipe Interactive Segmenter, MagicTouch v2 int8 (30,5 MB, Apache 2.0 laut
+  Model Card — die beschreibt noch v1). **Nicht eingecheckt** (`models/*.task` in
+  `.gitignore`), holen mit `scripts/download-models.sh` (feste Version, MD5-Pruefung).
+  `models/` ist Asset-Ordner des shared-Moduls; `noCompress += "task"` steht in
+  **androidApp** (im Bibliotheksmodul wirkt es nicht — dort lag das Modell komprimiert im APK).
+  Fehlt das Modell, meldet das Etikett "Modell fehlt".
+- **Ablauf:** `CameraState.Running.selectObjectAt/clearObjectSelection` →
+  `ObjectTracking` (androidMain) nimmt sich das neueste Analyse-Bild, sobald das Modell frei
+  ist (eigener Thread, nie eine Warteschlange), dreht/spiegelt es wie die Vorschau →
+  `ObjectSegmenter` (laedt das Modell erst beim ersten Tipp) → `regionAt` (commonMain,
+  7 Unit-Tests: zusammenhaengende Flaeche unter dem Tipp, nicht alle Maskenpixel) →
+  `onObjectSelection` → `ObjectBoxOverlay`. Nachgefuehrt wird am Schwerpunkt der letzten
+  Erkennung ("Re-Prompting") — noch ohne Gyro-Vorhersage und ohne Zwischen-Tracker.
+- **Plausibilitaetspruefung beim Verfolgen (18.10.2026, `capture/TrackingGate.kt`,
+  15 Unit-Tests).** Anlass (Nutzer am Geraet): verlor der Punkt das Objekt, markierte das
+  Modell den Hintergrund — oft den ganzen Bildschirm —, und am Schwerpunkt *davon* wurde
+  weitergesucht, das Objekt war endgueltig weg. Jetzt wird jede Erkennung gegen die letzte
+  *gute* geprueft und verworfen bei: Flaeche >= 85 % oder an >= 3 Bildraendern ab 40 %
+  (Hintergrund — ausser schon das gute Objekt stand an 3 Raendern, Nahaufnahme), mehr als
+  2,5-fach gewachsen, auf unter ein Viertel geschrumpft, oder gesprungen (IoU < 0,1 *und*
+  Schwerpunkt ausserhalb des um 50 % vergroesserten alten Rahmens). Verworfen heisst: nichts
+  melden, alter Rahmen bleibt stehen, weitergesucht wird am alten Schwerpunkt; verworfene
+  Erkennungen werden nie zum neuen Massstab. Erst nach 3 Fehlversuchen in Folge (auch
+  "nichts gefunden" zaehlt) → `Lost`. Auch der erste Tipp wird geprueft: Tipp auf eine Wand
+  ergibt keinen bildfuellenden Rahmen, sondern nach 3 Versuchen "verloren". Die Pruefung
+  laeuft nur auf dem Segmentierungs-Thread und setzt sich bei neuer `generation` selbst
+  zurueck. Schwellen grosszuegig gewaehlt (zwischen zwei Erkennungen ~0,2-0,5 s am Geraet),
+  **am Geraet noch nicht kalibriert.** Naechster Schritt, falls noetig: negative Punkte
+  (`Stroke.BrushMode.NEGATIVE`) ausserhalb des alten Rahmens, damit das Modell den
+  Hintergrund gar nicht erst nimmt.
+- **API-Befund:** in tasks-vision 1.0.0 steckt die teure Rechnung in `segment()`, nicht in
+  `setImage()` (anders als die Doku nahelegt) — Mehrfach-Tipps aufs selbe Bild sparen also
+  nichts.
+- **Emulator:** Erkennung korrekt (Fernseher der Wohnzimmer-Szene, Rahmen deckungsgleich),
+  aber Modell laden 29 s und eine Erkennung 60-150 s — der Emulator (1 Kern, 2 GB, Swap)
+  taugt nicht zum Messen. Google nennt ~208 ms (CPU, Pixel 10). **Tempo am Geraet offen.**
+- **Debug-APK nur arm64** (`abiFilters` in androidApp, nur `debug`): MediaPipe bringt native
+  Bibliotheken fuer 4 Architekturen (~48 MB); mit allen war das Debug-APK 130 MB und
+  passte nicht mehr in den Emulator (`INSTALL_FAILED_INSUFFICIENT_STORAGE`). Jetzt 71 MB.
+  Wer auf einem x86_64-Emulator testen will, muss den Filter erweitern.
+- iOS: kein Interactive Segmenter in MediaPipe; `onObjectSelection` ist dort ein leerer
+  Parameter. Spaeteres Gegenstueck: Vision `VNGenerateForegroundInstanceMaskRequest`.
+
+**Motiv per Tipp fixieren (18.10.2026).** Das per Tipp-Segmentierung erkannte Objekt ist
+jetzt das **Motiv der Bewertung**, nicht mehr nur ein Testrahmen. `FrameAnalysis.pinnedSubject`
+(neu, optional, `PinnedSubject` in `domain/model`) — `CameraScreen` setzt es aus der aktuellen
+`ObjectSelection.Found`, bevor `CompositionScorer` bewertet. `DefaultSubjectResolver` nimmt es
+**vor** Gesicht und Saliency (`SubjectSource.PINNED`, Konfidenz 1): Drittel-Regel,
+Tote-Flaeche-Ausnahme und Debug-Rechteck (tuerkis, "Angetippt") sehen damit alle dasselbe Motiv.
+- Nur `Found` zaehlt. Waehrend der ersten Erkennung, nach `Lost` (das Nachfuehren haelt dann an)
+  oder ohne Modell entscheidet wieder die automatische Motivwahl; der Rahmen sagt dann
+  "Motiv verloren — neu antippen".
+- Neue Auswahl setzt den Drittel-Zielpunkt zurueck (`scorer.reset()` bei `Searching`).
+  Zoom und Objektivwechsel heben die Fixierung auf (Schwerpunkt laege sonst auf anderem
+  Inhalt) — wie beim Fokuspunkt. Aufheben sonst: "×" am Rahmen oder lange druecken.
+- Etikett "Motiv fixiert"; Flaechenanteil/Rechenzeit nur noch bei eingeschaltetem Debug.
+- `FieldLog`: "Motiv fixiert (x % / y %)", "Fixiertes Motiv verloren", "Motiv-Fixierung aufgehoben".
+- Unit-Tests: `SubjectResolverTest` (Vorrang vor Gesicht/Saliency, Rahmen), `CompositionScorerTest`
+  (angetipptes Motiv bestimmt den Drittel-Hinweis, macht aus "kein Motiv" eine Bewertung).
+**Bekannte Luecke:** Zwischen zwei Erkennungen gilt der zuletzt erkannte Rahmen. Bewegt sich
+die Kamera schneller, als das Modell nachkommt, bezieht sich der Hinweis kurz auf eine alte
+Lage. Wie gross das am Geraet ist, haengt am Modell-Tempo (Google: ~200 ms) — offen.
+**Nicht verifiziert:** Ende zu Ende auf Geraet oder Emulator (kein Emulator lief; Erkennung
+dort 1-2,5 min pro Bild). `allTests` gruen inkl. iOS-Simulator.
+
+**Platzierungs-Hinweise erst nach dem Antippen (18.10.2026, Nutzerwunsch).** Im Sucher
+bewertet der `CompositionScorer` die Platzierung des Motivs (Drittel-Regel,
+Portraet-Rahmung) nur, wenn `FrameAnalysis.pinnedSubject` gesetzt ist — eingeschaltet ueber
+`CompositionScorer(placementNeedsPinnedSubject = true)` in `CameraScreen`. Ohne Tipp:
+`assessWithoutPlacement` — nur Horizont und tote Flaeche, **kein Score** (die Zahl waere ohne
+Platzierung keine Bewertung der Komposition, ein "passt" Lob fuer Ungeprueftes), sonst die
+neue neutrale Aussage `Verdict.AwaitingSubject` ("Motiv antippen — dann prüft die App seine
+Platzierung"). Der **Viewer bleibt bei der Standardeinstellung** (aus): gespeicherte Fotos
+lassen sich nicht antippen und wuerden sonst nie auf Platzierung bewertet. 6 neue Tests in
+`CompositionScorerTest` (bestehende Faelle ohne Tipp laufen ueber den Standard und bleiben
+gruen). **Nicht im Emulator verifiziert** — der Emulator lief nicht mehr. `allTests` gruen
+inkl. iOS-Simulator.
+
+**Allgemeine Tipps ohne angetipptes Motiv (18.10.2026, "Stufe 1").** Ohne Tipp geht die App
+davon aus, dass das Bild kein bestimmtes Motiv hat, und gibt Tipps, die fuer jedes Foto
+gelten. `assessWithoutPlacement` in dieser Rangfolge (nach Reparierbarkeit), weiter ohne Score:
+1. **Kopf angeschnitten** (`PortraitFramingRule`) — bleibt auch ohne Tipp aktiv: kein
+   Platzierungs-Tipp, sondern ein Fehler, der sich nicht reparieren laesst.
+2. **Belichtung** (`domain/rules/ExposureRule`, neu): ≥ 15 % ausgefressen → "Helle Bereiche
+   überbelichtet — Belichtung verringern"; ≥ 35 % fast schwarz *und* Mittel < 0,2 → "Bild zu
+   dunkel — Belichtung erhöhen". Messung `capture/ImageExposure.kt` auf dem 64×64-Helligkeitsbild
+   (`FrameAnalysis.exposure: ExposureStats?`), live und in `analyzeStill` (Android + iOS).
+3. **Horizont**, 4. **Kameraneigung** (`domain/rules/CameraPitchRule`, neu): 15°-50° **nach
+   oben** → "Kamera nach oben geneigt — gerade halten, sonst kippen Linien"; steiler gilt als
+   gewollt (Himmel). **Nach unten nie ein Hinweis** (Nutzerentscheidung 18.10.2026: Motive am
+   Boden, Tisch, Blick von oben sind oft gewollt) — die Regel hat dann keine Meinung. Messung `pitchFromGravity` in `HorizonSensor.kt`
+   (dritte Achse, `atan2(-z, hypot(x, y))`, positiv = Kamera nach oben, unabhaengig von
+   Hoch-/Querformat; 4 Tests mit dokumentierten Ankerpunkten). `FrameAnalysis.cameraPitchDegrees`
+   — bei der Frontkamera immer `null` (Vorzeichen waere umgekehrt), bei gespeicherten Fotos
+   ebenfalls (wird nicht mitgespeichert).
+5. **Leere Bildhaelfte** (`DeadSpaceRule`).
+Sonst `AwaitingSubject` mit dem Wartetext von oben (er laedt bereits zum Antippen ein).
+Mit angetipptem Motiv stehen Belichtung und Neigung in derselben Kette zwischen Rahmung und
+Drittel. **Beide nur als Hinweis, nicht im Score** — der bewertet die Komposition.
+Tests: `ExposureRuleTest`, `CameraPitchRuleTest`, `ImageExposureTest`, `HorizonSensorTest`,
+4 neue Faelle in `CompositionScorerTest`. `allTests` gruen inkl. iOS-Simulator.
+**Nicht verifiziert:** alle Schwellen (gesetzt, nicht gemessen — Feldtest), Vorzeichen der
+Neigung am echten Geraet (Ankerpunkte aus der Android-Doku hergeleitet).
+**Bekannte Luecke:** "Belichtung verringern" setzt man am schnellsten ueber den Sonnen-Regler,
+der nach einem Tipp erscheint — derselbe Tipp fixiert aber auch das Motiv. Wer zum Abdunkeln
+auf den Himmel tippt, macht den Himmel zum Motiv. Entscheidung offen (z. B. Fixieren per langem
+Druck).
+
+**Bekannte Luecke: Drittel-Hinweise zappeln und sind oft falsch (Befund 18.10.2026, nicht
+behoben).** Nutzer: Motiv wird gut erkannt, Hinweise aber "sehr sensibel und meistens
+falsch". `feldtest.log` vom Geraet (Sitzungen 18.10. 19:45-19:50) belegt es:
+- Wechsel im festen 2-s-Takt ("passt" ↔ "viel zu hoch", Frontkamera "viel zu hoch" ↔ "viel zu
+  tief") — genau `VerdictStabilizer.DEFAULT_MIN_DISPLAY_MS`. Der Stabilisator zeigt nach
+  Ablauf der Mindestzeit, was das *aktuelle Frame* sagt; ein einzelner Ausreisser steht dann
+  1,8 s. Keine Glaettung des Motivpunkts, keine Hysterese an 5 %/12 % und an der Wahl der
+  dominanten Achse; jede Textvariante (etwas/viel × 4 Richtungen) zaehlt als neue Aussage.
+- Fixiertes Motiv bei 63 %/62 % (fast genau auf dem Drittel-Punkt unten rechts) → binnen
+  15 s "zu hoch", "viel zu weit links", "viel zu weit rechts": der Schwerpunkt der
+  Segmentierungsmaske springt (Maske waechst/schrumpft, Re-Prompting am Schwerpunkt).
+- Regelinhalt: `RuleOfThirdsRule` verlangt den Schwerpunkt auf einem Drittel-*Schnittpunkt*
+  (beide Achsen, ±5 % Bildbreite). Ein Motiv auf einer Drittel-*Linie* oder bewusst mittig
+  bekommt "viel zu hoch/tief"; bei grossen Objekten (Person ganz, Baum) ist der
+  Flaechenschwerpunkt gar nicht der Punkt, auf den es ankommt (Kopf/Augen).
+- Das Protokoll schreibt den Motivpunkt nicht mit — fuer die Auswertung fehlt er.
+Vorgeschlagene Reihenfolge der Behebung: Regel auf Linien + Mitte erlaubt + grosse Objekte
+ausnehmen → Motivpunkt glaetten + Hysterese + Mindest-Bestaendigkeit im Stabilisator →
+Motivpunkt ins Protokoll. Tracking selbst bearbeitet parallel eine andere Sitzung
+(`ObjectTracking`/`TrackingGate`).
+
+**Horizontlinie im Bild + Tipp "Horizont in der Bildmitte" (19.10.2026).** Ergaenzt den
+Lagesensor (der weiss, wie schief das *Geraet* ist, nicht *wo* der Horizont im Bild liegt).
+- `capture/ImageHorizon.kt` (commonMain, auf dem 64×64-Helligkeitsbild): je Punkt der
+  senkrechte Sprung (Mittel 3 Zeilen darunter − 3 darueber), dann alle Linien von Rand zu Rand
+  (bis 20 Zeilen Hoehenunterschied, ~15-20°) probiert, entlang jeder der Sprung **mit
+  Vorzeichen** gemittelt — Textur mittelt sich weg, eine einzelne Objektkante traegt nur
+  teilweise. Angenommen ab mittlerem Sprung 0,08 **und** gleichgerichtetem Sprung auf ≥ 70 %
+  der Spalten. Beide Helligkeitsrichtungen (auch Schnee unter dunklem Himmel).
+- `FrameAnalysis.horizonLine: HorizonLine?` (Hoehe links/rechts normiert, `centerY`,
+  `angleDegrees(aspectRatio)` mit derselben Vorzeichen-Konvention wie `horizonTiltDegrees`,
+  `mirroredHorizontally()`). Befuellt live (Android, Frontkamera gespiegelt) und in
+  `analyzeStill` (Android + iOS) — der Tipp erscheint also auch bei gespeicherten Fotos.
+- `domain/rules/HorizonPlacementRule`: Linie naeher als 0,08 an der Bildmitte → "Horizont in
+  der Bildmitte — ins obere oder untere Drittel legen"; steiler als 20° = Diagonale, keine
+  Meinung. Gilt ohne angetipptes Motiv (vor der leeren Bildhaelfte, weil beide oft dieselbe
+  Ursache haben); mit Motiv nach der Drittel-Regel, Score-Gewicht 0,5.
+- Tests: `ImageHorizonTest` (10 synthetische Szenen: mittig, Drittel, schief, Schnee, Textur,
+  Einzelobjekt, senkrechte Kante, Nebel, Spiegelung, Winkelumrechnung),
+  `HorizonPlacementRuleTest`, 2 Faelle in `CompositionScorerTest`. `allTests` gruen inkl. iOS.
+**Bekannte Grenzen:** erkennt *jede* durchgehende waagerechte Hell-Dunkel-Kante — auch
+Tischkante oder Wand/Boden im Innenraum (der Tipp ist dann meist trotzdem sinnvoll);
+gleichmaessige waagerechte Streifen (Jalousie) koennen eine Linie vortaeuschen.
+**Nicht verifiziert:** keine einzige echte Szene (kein Emulator lief, kein Geraetetest).
+**Nicht genutzt, aber vorhanden:** der Winkel der Bildlinie. Damit liesse sich der fehlende
+Horizont-Hinweis bei gespeicherten Fotos (kein Sensorwert, siehe "Bewertung gespeicherter
+Fotos") und der Fall "Geraet gerade, Horizont im Bild schief" abdecken — Vorsicht bei Haengen,
+die echt schraeg sind.
+
+**Testgeraet Galaxy S24 (SM-S921B, Android 16) — Kamera-Fakten (19.10.2026, per
+`dumpsys media.camera`).** CameraX nimmt als Rueckkamera die logische Kamera `0`
+(`LOGICAL_MULTI_CAMERA`, Zoombereich 0,6–10×): Hauptkamera (5,4 mm, 8,16 mm Sensorbreite) +
+Tele (7,0 mm, 3,648 mm) — das Tele entspricht rechnerisch **2,9×** der Hauptkamera, nicht 3×.
+Den Wechsel waehlt der Samsung-HAL selbst; die App sieht ihn nur ueber das Ergebnis-Feld
+`LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID` (wird gemeldet). Tele fokussiert erst ab 50 cm
+(Hauptkamera 10 cm) — naeher dran (und vermutlich bei wenig Licht) bleibt "3×" ein Ausschnitt
+der Hauptkamera. Ob und wo der HAL fuer Dritt-Apps wirklich umschaltet, ist noch nicht
+geloggt. Weitere logische Kameras (20/21/23) existieren, sind fuer Dritt-Apps vermutlich nicht
+sichtbar.
+
+**Weicher Objektivwechsel Haupt ↔ Tele (19.10.2026, Option 3 aus der Zoom-Analyse).** Beim
+Wechsel innerhalb der logischen Rueckkamera springt das Bild (Objektive sitzen nebeneinander).
+Jetzt wird der Sprung gemessen und die Vorschau gleitet ihn weg:
+- **Erkennen:** `capture/LensHandoverDetector.kt` (androidMain) — Camera2-Callback an der
+  *Analyse* (CameraX buendelt ihn mit dem von `ManualCameraControl` an der Vorschau) liest pro
+  Bild `LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID` + `CONTROL_ZOOM_RATIO`, zugeordnet ueber den
+  Sensor-Zeitstempel. Laeuft bei **jedem** Analyse-Bild, vor dem 10-Hz-Takt (je aelter das
+  Vergleichsbild, desto mehr hat sich die Kamera bewegt). Nur bei `LOGICAL_MULTI_CAMERA`.
+- **Messen:** `capture/ImageRegistration.kt` (commonMain) — Phasenkorrelation auf dem
+  64×64-Helligkeitsbild, Zoomunterschied zwischen den Bildern vorher herausgerechnet,
+  Hann-Fenster, **Tiefpass im Kreuzspektrum** (ohne ihn gewann das Rauschen, und die
+  Unterpixel-Schaetzung lag bis 0,5 px daneben), Unterpixel per Parabel. FFT aus
+  `SpectralResidualSaliency.fft2d` (dafuer `internal`). Verlaesslich nur bei Korrelation
+  ≥ 0,15 **und** Eindeutigkeit (Maximum / zweithoechstes) ≥ 5 und Versatz ≤ 20 % — im Test:
+  echte Verschiebung 15-24, fremde Szene 2,7. 8 Tests in `ImageRegistrationTest`.
+- **Ausgleichen:** `CameraPreview(onLensHandover = …)` (neuer Parameter, iOS leer) →
+  `CameraScreen`: Vorschau per `graphicsLayer` um −Versatz verschoben, gleitet in
+  `LENS_HANDOVER_GLIDE_MS` (= Zoom-Animation, 300 ms) auf 0; Rahmen `clipToBounds`. Nur die
+  Vorschau, nicht das Raster (das zeigt den Foto-Ausschnitt). Fokusring/Objektrahmen sind beim
+  Wechsel ohnehin weg (jede Zoomaenderung hebt sie auf). Das Foto selbst ist unberuehrt.
+- `FieldLog` schreibt jeden Wechsel mit Versatz, Korrelation, Eindeutigkeit, Messdauer,
+  Bildalter und Abstand zum Vergleichsbild — fuers Kalibrieren am Geraet.
+**Bekannte Grenze:** Der Ausgleich kommt erst, wenn das erste Bild der neuen Kamera analysiert
+ist. Bis dahin zeigt die Vorschau den Sprung schon (wie lange, sagt "Bildalter" im Protokoll).
+Ist das sichtbar, waere der naechste Schritt, den Versatz des letzten Wechsels vorzuhalten und
+schon beim Callback anzuwenden.
+**Nicht verifiziert:** am Geraet noch nie gelaufen (Installation am 19.10. scheiterte, WLAN-adb
+offline). Offen: ob der HAL fuer Dritt-Apps umschaltet, ob CameraX den Callback korrekt
+buendelt, echte Korrelations-/Eindeutigkeitswerte, sichtbare Verzoegerung. `allTests` gruen.
+
 **Build/Run (Android):**
+- Einmalig: `scripts/download-models.sh` (ML-Modelle nach `models/`, nicht eingecheckt)
 - `./gradlew :androidApp:assembleDebug` — Debug-APK bauen
 - Im Android Studio Projekt oeffnen (nutzt dessen gebuendeltes JBR) oder lokal:
   `JAVA_HOME=/Applications/Android\ Studio.app/Contents/jbr/Contents/Home ./gradlew ...`

@@ -92,4 +92,35 @@ class HorizonSensorTest {
 
         assertTrue(tilt != null && tilt in -180f..180f, "ausserhalb des Bereichs: $tilt")
     }
+
+    // --- Neigung nach oben/unten (Kamera-"Pitch") ------------------------------------------
+    // Ankerpunkte, die sich ohne Geraet nachpruefen lassen: Android-Doku "when the device lies
+    // flat on a table [screen up], the gravity sensor reads z = +9.81". Die Rueckkamera blickt
+    // dann auf den Tisch, also senkrecht nach unten.
+
+    @Test
+    fun `aufrecht zeigt die Kamera waagerecht`() {
+        assertEquals(0f, pitchFromGravity(gravityX = 0f, gravityY = 9.81f, gravityZ = 0f))
+    }
+
+    @Test
+    fun `flach auf dem Tisch mit Bildschirm oben zeigt die Kamera nach unten`() {
+        assertEquals(-90f, pitchFromGravity(gravityX = 0f, gravityY = 0f, gravityZ = 9.81f))
+    }
+
+    @Test
+    fun `Kamera 30 Grad nach oben - Bildschirm neigt sich nach unten`() {
+        // Aufwaertsvektor bekommt eine negative Z-Komponente: (0, cos 30, -sin 30) * 9.81
+        val pitch = pitchFromGravity(gravityX = 0f, gravityY = 8.496f, gravityZ = -4.905f)
+
+        assertEquals(30f, pitch!!, absoluteTolerance = 0.2f)
+    }
+
+    @Test
+    fun `Neigung nach oben gilt im Querformat genauso`() {
+        // Quer gehalten liegt der Aufwaertsvektor auf X statt Y — der Wert darf sich nicht aendern.
+        val pitch = pitchFromGravity(gravityX = 8.496f, gravityY = 0f, gravityZ = -4.905f)
+
+        assertEquals(30f, pitch!!, absoluteTolerance = 0.2f)
+    }
 }

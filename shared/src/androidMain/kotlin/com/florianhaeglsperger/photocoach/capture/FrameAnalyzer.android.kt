@@ -44,6 +44,8 @@ actual class CameraFrame(
      * `analyze()` nachgespiegelt.
      */
     internal val mirrored: Boolean = false,
+    /** Neigung der Kamera nach oben/unten aus dem Lagesensor, siehe `pitchFromGravity`. */
+    internal val pitchDegrees: Float? = null,
 )
 
 /**
@@ -119,6 +121,12 @@ actual class FrameAnalyzer actual constructor() {
             timestampMs = frame.image.imageInfo.timestamp / 1_000_000L,
             aspectRatio = uprightWidth.toFloat() / uprightHeight.toFloat(),
             structure = structure,
+            // Frontkamera: Vorzeichen waere umgekehrt, und kippende Linien sind beim Selfie
+            // kein Thema — siehe FrameAnalysis.cameraPitchDegrees.
+            cameraPitchDegrees = if (frame.mirrored) null else frame.pitchDegrees,
+            exposure = luma?.let(ImageExposure::of),
+            horizonLine = luma?.let(ImageHorizon::detect)
+                ?.let { if (frame.mirrored) it.mirroredHorizontally() else it },
         )
     }
 
@@ -160,6 +168,8 @@ actual class FrameAnalyzer actual constructor() {
             timestampMs = 0L,
             aspectRatio = width.toFloat() / height.toFloat(),
             structure = luma?.let(ImageStructure::of),
+            exposure = luma?.let(ImageExposure::of),
+            horizonLine = luma?.let(ImageHorizon::detect),
         )
     }
 

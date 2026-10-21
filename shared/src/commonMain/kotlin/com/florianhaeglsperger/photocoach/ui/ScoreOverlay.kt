@@ -50,6 +50,8 @@ fun Verdict.displayText(): String = when (this) {
     is Verdict.Fix -> hint.message
     Verdict.Good -> "Komposition passt"
     Verdict.NoSubject -> "Kein klares Motiv erkannt"
+    // Zweiteilig wie die Regeltexte (splitHint): oben was zu tun ist, darunter wozu.
+    Verdict.AwaitingSubject -> "Motiv antippen — dann prüft die App seine Platzierung"
 }
 
 /**
@@ -84,7 +86,7 @@ fun ScoreOverlay(
     val color = when (verdict) {
         is Verdict.Fix -> HINT_COLOR
         Verdict.Good -> OK_COLOR
-        Verdict.NoSubject -> NEUTRAL_COLOR
+        Verdict.NoSubject, Verdict.AwaitingSubject -> NEUTRAL_COLOR
     }
 
     Row(
@@ -182,7 +184,7 @@ private fun StatusIcon(verdict: Verdict) {
         when (verdict) {
             is Verdict.Fix -> drawWarningTriangle()
             Verdict.Good -> drawCheck()
-            Verdict.NoSubject -> drawCircle(
+            Verdict.NoSubject, Verdict.AwaitingSubject -> drawCircle(
                 color = NEUTRAL_COLOR,
                 radius = size.width * 0.4f,
                 style = Stroke(width = size.width * 0.12f),

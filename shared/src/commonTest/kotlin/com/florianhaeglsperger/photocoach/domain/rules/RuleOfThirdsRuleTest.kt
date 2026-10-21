@@ -149,4 +149,44 @@ class RuleOfThirdsRuleTest {
         assertEquals(fern, assertNotNull(result).target)
         assertTrue(result.score < 1f)
     }
+
+    // --- Mittige Motive: keine erfundene Richtung (Fehler vom 19.10.2026) ---
+
+    @Test
+    fun `Motiv genau in der Mitte bekommt keine Richtung - auch im Hochformat`() {
+        // Genau der gemeldete Fall: im Hochformat kam "Motiv viel zu tief".
+        for (aspect in listOf(PORTRAIT_9_16, 3f / 4f, 1f, LANDSCAPE_16_9)) {
+            val hint = RuleOfThirdsRule.evaluate(frame(faces = listOf(faceAt(CENTER, CENTER)), aspectRatio = aspect))
+            assertEquals(
+                "Motiv in der Bildmitte — aufs Drittel gesetzt wirkt es spannender",
+                assertNotNull(hint).message,
+                "Seitenverhaeltnis $aspect",
+            )
+        }
+    }
+
+    @Test
+    fun `knapp neben der Mitte gilt noch als mittig`() {
+        val fastMittig = faceAt(CENTER + 0.03f, CENTER - 0.03f)
+        assertTrue(assertNotNull(RuleOfThirdsRule.evaluate(frame(faces = listOf(fastMittig)))).message.startsWith("Motiv in der Bildmitte"))
+    }
+
+    @Test
+    fun `waagerecht mittig auf einer Drittel-Hoehe - links oder rechts ohne Festlegung`() {
+        val hint = RuleOfThirdsRule.evaluate(frame(faces = listOf(faceAt(CENTER, THIRD_TOP))))
+        assertEquals("Motiv waagerecht mittig — nach links oder rechts aufs Drittel", assertNotNull(hint).message)
+    }
+
+    @Test
+    fun `auf halber Hoehe auf einer Drittel-Linie - hoeher oder tiefer ohne Festlegung`() {
+        val hint = RuleOfThirdsRule.evaluate(frame(faces = listOf(faceAt(THIRD_LEFT, CENTER)), aspectRatio = PORTRAIT_9_16))
+        assertEquals("Motiv auf halber Höhe — höher oder tiefer aufs Drittel", assertNotNull(hint).message)
+    }
+
+    @Test
+    fun `waagerecht mittig aber deutlich zu hoch - die eindeutige Achse wird genannt`() {
+        // Senkrecht hat das Motiv eine klare Richtung (nahe am oberen Rand) — die zaehlt.
+        val hint = RuleOfThirdsRule.evaluate(frame(faces = listOf(faceAt(CENTER, 0.12f)), aspectRatio = PORTRAIT_9_16))
+        assertEquals("Motiv viel zu hoch", assertNotNull(hint).message)
+    }
 }

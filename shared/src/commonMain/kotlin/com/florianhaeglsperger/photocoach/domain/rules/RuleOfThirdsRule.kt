@@ -71,6 +71,23 @@ object RuleOfThirdsRule : ScoredRule {
      */
     const val LARGE_OFFSET_PERCENT = 12
 
+    /**
+     * Liegt das Motiv auf einer Achse so nah an der Bildmitte (Anteil der Bildbreite bzw.
+     * -hoehe), hat es auf dieser Achse **keine Richtung**: der linke und der rechte (bzw.
+     * obere und untere) Drittel-Punkt sind praktisch gleich weit weg.
+     *
+     * Gefunden 19.10.2026 (Nutzer, angetipptes Motiv in der Bildmitte): Die Regel meldete
+     * "Motiv viel zu tief". Bei exakt gleichem Abstand nahm [nearestThirdsPoint] einfach den
+     * ersten Punkt der Liste (links oben) — gemessen daran liegt die Mitte "zu tief", und im
+     * Hochformat wiegt die senkrechte Achse schwerer. Die Richtung kam aus der Reihenfolge
+     * einer Liste, nicht aus dem Bild.
+     *
+     * 4 %: etwa die Messungenauigkeit des Motivpunkts (Saliency-Raster ~8 % je Zelle). Bei
+     * 5 % fiel schon ein Motiv bei x = 0,453 hinein — 12 % vom linken, aber 21 % vom rechten
+     * Drittel, da ist "zu weit rechts" noch eine echte Richtung.
+     */
+    const val CENTER_BAND = 0.04f
+
     private val resolver: SubjectResolver = DefaultSubjectResolver
 
     override fun assess(analysis: FrameAnalysis): RuleAssessment? = assess(analysis, target = null)
@@ -96,9 +113,25 @@ object RuleOfThirdsRule : ScoredRule {
         val offsetY = evaluation.offsetYPercent
         if (abs(offsetX) < MIN_OFFSET_PERCENT && abs(offsetY) < MIN_OFFSET_PERCENT) return null
 
+        // Mittig auf einer Achse = auf dieser Achse keine Richtung (siehe CENTER_BAND).
+        val centeredX = abs(evaluation.subject.x - 0.5f) < CENTER_BAND
+        val centeredY = abs(evaluation.subject.y - 0.5f) < CENTER_BAND
+        // Eine Achse mit Richtung, auf der das Motiv deutlich daneben liegt, geht vor —
+        // dort ist der Hinweis eindeutig.
+        val clearX = !centeredX && abs(offsetX) >= MIN_OFFSET_PERCENT
+        val clearY = !centeredY && abs(offsetY) >= MIN_OFFSET_PERCENT
+        if (!clearX && !clearY) {
+            return when {
+                centeredX && centeredY -> Hint("Motiv in der Bildmitte — aufs Drittel gesetzt wirkt es spannender")
+                centeredX -> Hint("Motiv waagerecht mittig — nach links oder rechts aufs Drittel")
+                else -> Hint("Motiv auf halber Höhe — höher oder tiefer aufs Drittel")
+            }
+        }
+
         // Nur die dominante Achse nennen: zwei Korrekturen gleichzeitig sind im Sucher
         // nicht umsetzbar, und der Rule-Contract sieht ohnehin genau einen Hinweis vor.
-        val horizontal = abs(offsetX) >= abs(offsetY)
+        // Achsen ohne Richtung (mittig) scheiden dabei aus.
+        val horizontal = if (clearX && clearY) abs(offsetX) >= abs(offsetY) else clearX
         val offset = if (horizontal) offsetX else offsetY
         val amount = if (abs(offset) >= LARGE_OFFSET_PERCENT) "viel" else "etwas"
         val direction = when {

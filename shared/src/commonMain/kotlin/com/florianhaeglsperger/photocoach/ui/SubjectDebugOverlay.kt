@@ -22,6 +22,9 @@ import kotlin.math.roundToInt
 private val FACE_COLOR = Color(0xFFFF2D95)
 private val SALIENCY_COLOR = Color(0xFFFFD60A)
 
+/** Angetippt: dasselbe Tuerkis wie der Objekt-Rahmen der Tipp-Auswahl. */
+private val PINNED_COLOR = Color(0xFF4DD0E1)
+
 /**
  * Debug: zeichnet das Motiv, das die Regeln gerade sehen, als Rechteck mit Mittelpunkt in
  * den Sucher — damit sich pruefen laesst, ob die Motiverkennung stimmt (und woher sie kommt:
@@ -33,7 +36,11 @@ private val SALIENCY_COLOR = Color(0xFFFFD60A)
 @Composable
 fun SubjectDebugOverlay(subject: SubjectPoint?, modifier: Modifier = Modifier) {
     if (subject == null) return
-    val color = if (subject.source == SubjectSource.FACE) FACE_COLOR else SALIENCY_COLOR
+    val color = when (subject.source) {
+        SubjectSource.PINNED -> PINNED_COLOR
+        SubjectSource.FACE -> FACE_COLOR
+        SubjectSource.SALIENCY -> SALIENCY_COLOR
+    }
     val bounds = subject.bounds
 
     BoxWithConstraints(modifier = modifier) {
@@ -49,7 +56,11 @@ fun SubjectDebugOverlay(subject: SubjectPoint?, modifier: Modifier = Modifier) {
             drawCircle(color, radius = 5.dp.toPx(), center = Offset(subject.x * size.width, subject.y * size.height))
         }
         if (bounds != null) {
-            val label = if (subject.source == SubjectSource.FACE) "Gesicht" else "Saliency"
+            val label = when (subject.source) {
+                SubjectSource.PINNED -> "Angetippt"
+                SubjectSource.FACE -> "Gesicht"
+                SubjectSource.SALIENCY -> "Saliency"
+            }
             Text(
                 text = "$label ${(subject.confidence * 100).roundToInt()} %",
                 color = Color.Black,

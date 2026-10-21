@@ -129,6 +129,8 @@ actual class FrameAnalyzer actual constructor() {
             timestampMs = 0L,
             aspectRatio = image.width.toFloat() / image.height.toFloat(),
             structure = ImageStructure.of(luma),
+            exposure = ImageExposure.of(luma),
+            horizonLine = ImageHorizon.detect(luma),
         )
     }
 

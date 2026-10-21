@@ -40,8 +40,12 @@ import androidx.lifecycle.Observer
 import com.florianhaeglsperger.photocoach.capture.CameraFrame
 import com.florianhaeglsperger.photocoach.capture.FrameAnalyzer
 import com.florianhaeglsperger.photocoach.capture.HorizonSensor
+import com.florianhaeglsperger.photocoach.capture.LensHandoverDetector
 import com.florianhaeglsperger.photocoach.capture.ManualCameraControl
 import com.florianhaeglsperger.photocoach.capture.ManualSettings
+import com.florianhaeglsperger.photocoach.capture.ObjectSegmenter
+import com.florianhaeglsperger.photocoach.capture.ObjectSelection
+import com.florianhaeglsperger.photocoach.capture.ObjectTracking
 import com.florianhaeglsperger.photocoach.diagnostics.FieldLog
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
 import java.text.SimpleDateFormat
@@ -79,6 +83,8 @@ actual fun CameraPreview(
     modifier: Modifier,
     onState: (CameraState) -> Unit,
     onAnalysis: (FrameAnalysis) -> Unit,
+    onObjectSelection: (ObjectSelection?) -> Unit,
+    onLensHandover: (LensHandover) -> Unit,
 ) {
     val context = LocalContext.current
 
@@ -140,6 +146,17 @@ actual fun CameraPreview(
     // nur einmal gesetzt. rememberUpdatedState sorgt dafuer, dass er immer den aktuellen
     // Callback aufruft statt den vom ersten Durchlauf.
     val currentOnAnalysis by rememberUpdatedState(onAnalysis)
+    val currentOnObjectSelection by rememberUpdatedState(onObjectSelection)
+    val currentOnLensHandover by rememberUpdatedState(onLensHandover)
+    // Erkennt den Wechsel Hauptkamera ↔ Tele innerhalb der logischen Rueckkamera.
+    val lensHandoverDetector = remember { LensHandoverDetector() }
+
+    // Tipp-Segmentierung (MediaPipe). Eigener Thread: eine Erkennung dauert ~200 ms und mehr
+    // und darf weder die Analyse (Hinweise) noch die Vorschau aufhalten. Das Modell (30 MB)
+    // wird erst beim ersten Tipp geladen.
+    val objectSegmenter = remember(context) { ObjectSegmenter(context.applicationContext) }
+    val segmentationExecutor = remember { Executors.newSingleThreadExecutor() }
+    val objectTracking = remember { ObjectTracking() }
 
     val frameAnalyzer = remember { FrameAnalyzer() }
     // Pro-Modus (ISO, Verschlusszeit, ...). Haelt die letzten Messwerte der Automatik,
@@ -213,6 +230,7 @@ actual fun CameraPreview(
             // Warteschlange aufbauen. Veraltete Analyse-Ergebnisse waeren fuer einen
             // Live-Sucher wertlos — der Nutzer hat das Motiv laengst weitergeschwenkt.
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .also(lensHandoverDetector::attachTo)
             .build()
             .apply {
                 var lastAnalysisMs = 0L
@@ -222,6 +240,24 @@ actual fun CameraPreview(
                     // ImageProxy MUSS in jedem Pfad geschlossen werden, auch beim
                     // Ueberspringen — sonst blockiert die Pipeline nach wenigen Frames.
                     try {
+                        // Als Erstes und bei jedem Bild: beim Objektivwechsel zaehlt jede
+                        // Millisekunde, bis die Vorschau den Sprung ausgleicht.
+                        lensHandoverDetector.onFrame(imageProxy, mirrored = activeLensFacing == LensFacing.FRONT)
+                            ?.let { handover -> mainExecutor.execute { currentOnLensHandover(handover) } }
+                        // Unabhaengig vom 10-Hz-Takt: segmentiert wird, sobald das Modell frei
+                        // ist — immer das gerade neueste Bild, nie eine Warteschlange.
+                        objectTracking.offerFrame(
+                            imageProxy = imageProxy,
+                            mirrored = activeLensFacing == LensFacing.FRONT,
+                            executor = segmentationExecutor,
+                            segmenter = objectSegmenter,
+                            deliver = { generation, selection ->
+                                mainExecutor.execute {
+                                    // Inzwischen neu getippt oder aufgehoben: veraltet.
+                                    if (objectTracking.generation == generation) currentOnObjectSelection(selection)
+                                }
+                            },
+                        )
                         val nowMs = System.currentTimeMillis()
                         if (nowMs - lastAnalysisMs >= ANALYSIS_INTERVAL_MS) {
                             lastAnalysisMs = nowMs
@@ -229,6 +265,7 @@ actual fun CameraPreview(
                                 CameraFrame(
                                     image = imageProxy,
                                     tiltDegrees = horizonSensor.currentTiltDegrees(),
+                                    pitchDegrees = horizonSensor.currentPitchDegrees(),
                                     mirrored = activeLensFacing == LensFacing.FRONT,
                                 ),
                             )
@@ -325,6 +362,7 @@ actual fun CameraPreview(
                         imageAnalysis,
                         imageCapture,
                     )
+                    lensHandoverDetector.bindTo(camera)
 
                     // Zoom ueber CameraControl statt Beschnitt im Nachhinein: der Sensor-
                     // Ausschnitt gilt dann fuer alle drei Use-Cases zugleich. Auf Geraeten,
@@ -405,6 +443,14 @@ actual fun CameraPreview(
                         canFocusAtPoint = canFocusAtPoint,
                         focusAt = focusAt,
                         resetFocus = { camera.cameraControl.cancelFocusAndMetering() },
+                        selectObjectAt = { x, y ->
+                            objectTracking.start(x, y)
+                            currentOnObjectSelection(ObjectSelection.Searching(x, y))
+                        },
+                        clearObjectSelection = {
+                            objectTracking.stop()
+                            currentOnObjectSelection(null)
+                        },
                     )
 
                     // Jede Zoom-Aenderung (Button, Pinch) kommt hierueber zurueck und wird
@@ -426,6 +472,9 @@ actual fun CameraPreview(
         onDispose {
             disposed = true
             stopZoomObserver()
+            // Neues Objektiv = neue Szene: eine Auswahl hat dazu keinen Bezug mehr.
+            objectTracking.stop()
+            currentOnObjectSelection(null)
             // Kein clearAnalyzer() hier: der Analyzer wird nur einmal gesetzt (oben im
             // remember), dieser Effect laeuft aber bei jedem Objektivwechsel neu. Mit
             // clearAnalyzer() an dieser Stelle kam nach dem ersten Wechsel kein einziges
@@ -440,6 +489,11 @@ actual fun CameraPreview(
         onDispose {
             imageAnalysis.clearAnalyzer()
             analysisExecutor.shutdown()
+            objectTracking.stop()
+            // Auf dem Segmentierungs-Thread schliessen: dort koennte gerade eine Erkennung
+            // laufen, und das Modell ist nicht thread-sicher.
+            segmentationExecutor.execute { objectSegmenter.close() }
+            segmentationExecutor.shutdown()
         }
     }
 

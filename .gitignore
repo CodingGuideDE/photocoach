@@ -18,3 +18,7 @@ iosApp/Generated-Info.plist
 
 # Rohvideos/Content-Assets - zu gross fuers Repo, bleiben lokal
 Planung/Instagram/*.mp4
+
+# ML-Modelle - zu gross fuers Repo (MagicTouch: 30 MB). Holen mit scripts/download-models.sh
+models/*.task
+models/*.tflite

@@ -41,7 +41,10 @@ data class SubjectBounds(val left: Float, val top: Float, val right: Float, val 
 
 /** Woraus der Motivpunkt abgeleitet wurde — fuer Debug-Anzeige und spaetere Gewichtung. */
 enum class SubjectSource {
-    /** Aus einem erkannten Gesicht. Der verlaesslichere Fall. */
+    /** Vom Nutzer angetippt — keine Schaetzung, sondern seine Entscheidung. */
+    PINNED,
+
+    /** Aus einem erkannten Gesicht. Der verlaesslichste automatische Fall. */
     FACE,
 
     /** Aus einem Klumpen von Saliency-Punkten. */

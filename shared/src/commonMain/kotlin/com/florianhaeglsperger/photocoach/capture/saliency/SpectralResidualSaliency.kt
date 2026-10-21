@@ -251,8 +251,11 @@ object SpectralResidualSaliency {
         return out
     }
 
-    /** 2D-FFT in place: erst alle Zeilen, dann alle Spalten. */
-    private fun fft2d(re: DoubleArray, im: DoubleArray, n: Int, inverse: Boolean) {
+    /**
+     * 2D-FFT in place: erst alle Zeilen, dann alle Spalten. Die inverse Richtung teilt durch
+     * n². `internal`, weil `ImageRegistration` sie mitbenutzt.
+     */
+    internal fun fft2d(re: DoubleArray, im: DoubleArray, n: Int, inverse: Boolean) {
         val rowRe = DoubleArray(n)
         val rowIm = DoubleArray(n)
         for (y in 0 until n) {

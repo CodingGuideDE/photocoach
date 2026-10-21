@@ -50,6 +50,10 @@ kotlin {
             // Gesichtserkennung fuer FrameAnalysis.faces (Phase 1). Das Modell ist im
             // Artefakt gebuendelt, laeuft on-device und laedt nichts nach.
             implementation(libs.mlkit.face.detection)
+
+            // Tipp-Segmentierung ("welches Objekt habe ich angetippt?"). Nur die Laufzeit —
+            // das Modell kommt als Asset aus models/ dazu (siehe unten).
+            implementation(libs.mediapipe.tasks.vision)
         }
 
         androidUnitTest.dependencies {
@@ -76,6 +80,13 @@ android {
     defaultConfig {
         minSdk = 26
     }
+
+    // Modelle liegen zentral im Projektordner models/ (nicht eingecheckt, zu gross — siehe
+    // scripts/download-models.sh) und werden von dort als Assets ins APK gepackt.
+    sourceSets["main"].assets.srcDir(rootProject.file("models"))
+
+    // Unkomprimiert ins APK muss das Modell trotzdem — das regelt androidApp/build.gradle.kts
+    // (noCompress wirkt nur dort, wo das APK gepackt wird).
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

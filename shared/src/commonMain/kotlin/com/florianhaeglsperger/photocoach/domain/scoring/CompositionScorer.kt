@@ -1,8 +1,11 @@
 package com.florianhaeglsperger.photocoach.domain.scoring
 
 import com.florianhaeglsperger.photocoach.domain.model.FrameAnalysis
+import com.florianhaeglsperger.photocoach.domain.rules.CameraPitchRule
 import com.florianhaeglsperger.photocoach.domain.rules.DeadSpaceRule
+import com.florianhaeglsperger.photocoach.domain.rules.ExposureRule
 import com.florianhaeglsperger.photocoach.domain.rules.Hint
+import com.florianhaeglsperger.photocoach.domain.rules.HorizonPlacementRule
 import com.florianhaeglsperger.photocoach.domain.rules.HorizonRule
 import com.florianhaeglsperger.photocoach.domain.rules.PortraitFramingRule
 import com.florianhaeglsperger.photocoach.domain.rules.RuleAssessment
@@ -33,6 +36,13 @@ sealed interface Verdict {
      * gesehen hat.
      */
     data object NoSubject : Verdict
+
+    /**
+     * Im Sucher, solange kein Motiv angetippt ist ([CompositionScorer] mit
+     * `placementNeedsPinnedSubject`): ueber die Platzierung des Motivs sagt die App dann
+     * bewusst nichts — weder Tadel noch Lob —, und sonst gab es nichts zu beanstanden.
+     */
+    data object AwaitingSubject : Verdict
 }
 
 /** Gesamtergebnis eines Frames. */
@@ -52,13 +62,25 @@ data class CompositionAssessment(
  *
  * Plan 3.2: "nur 1 Hinweis gleichzeitig anzeigen, wichtigsten zuerst — sonst Overload".
  *
- * 1. **Portraet-Rahmung** — ein angeschnittener Kopf ist der einzige Fehler hier, der sich
- *    hinterher *nicht* reparieren laesst. Was weg ist, ist weg.
- * 2. **Horizont** — objektiv falsch und eindeutig benennbar, aber notfalls durch Drehen und
+ * 1. **Portraet-Rahmung** — ein angeschnittener Kopf laesst sich hinterher *nicht*
+ *    reparieren. Was weg ist, ist weg.
+ * 2. **Belichtung** ([ExposureRule]) — ausgefressene Flaechen ebenso wenig: dort ist keine
+ *    Zeichnung mehr im Bild.
+ * 3. **Horizont** — objektiv falsch und eindeutig benennbar, aber notfalls durch Drehen und
  *    Beschneiden zu retten. Kostet dann Bildrand.
- * 3. **Drittel-Regel** — eine Empfehlung, keine Regel, und je nach Motiv bewusst verletzbar.
- * 4. **Tote Flaeche** — am leichtesten hinterher per Beschnitt zu beheben, und bei einem
+ * 4. **Kameraneigung** ([CameraPitchRule]) — kippende Linien lassen sich nachtraeglich
+ *    entzerren, kosten dann aber deutlich Bildrand.
+ * 5. **Drittel-Regel** — eine Empfehlung, keine Regel, und je nach Motiv bewusst verletzbar.
+ * 6. **Horizont in der Bildmitte** ([HorizonPlacementRule]) — Gestaltung, per Beschnitt
+ *    zu beheben. Vor der toten Flaeche, weil beide oft dieselbe Ursache haben (zu viel leerer
+ *    Himmel) und der Horizont-Hinweis sagt, *was* zu tun ist.
+ * 7. **Tote Flaeche** — am leichtesten hinterher per Beschnitt zu beheben, und bei einem
  *    Motiv ohnehin meist schon ueber die Drittel-Regel abgedeckt.
+ *
+ * Belichtung und Kameraneigung liefern nur **Hinweise**, gehen aber nicht in den Score ein:
+ * der ist eine Bewertung der *Komposition*, und ein ueberbelichteter Himmel macht die
+ * Komposition nicht schlechter. Sie gelten — anders als die Platzierung — auch ohne
+ * angetipptes Motiv.
  *
  * ## Der Score: gewichteter Mittelwert
  *
@@ -69,6 +91,7 @@ data class CompositionAssessment(
  *    Symmetrie ist eine legitime Bildsprache". Ein wackliger Saliency-Klumpen zaehlt
  *    entsprechend weniger als ein erkanntes Gesicht.
  *  - Tote Flaeche: [WEIGHT_DEAD_SPACE].
+ *  - Horizont in der Bildmitte: [WEIGHT_HORIZON_PLACEMENT] — Gestaltung, kein Fehler.
  *
  * Haelt Zustand (ueber [ThirdsTargetTracker]) und ist deshalb eine Klasse, kein `object` —
  * pro Sucher-Sitzung eine Instanz.
@@ -76,9 +99,27 @@ data class CompositionAssessment(
 class CompositionScorer(
     private val subjectResolver: SubjectResolver = DefaultSubjectResolver,
     private val thirdsTracker: ThirdsTargetTracker = ThirdsTargetTracker(),
+    /**
+     * Platzierung des Motivs (Drittel-Regel, Portraet-Rahmung) erst bewerten, wenn der Nutzer
+     * ein Motiv angetippt hat ([FrameAnalysis.pinnedSubject]). Nur im Sucher eingeschaltet
+     * (Nutzerwunsch, 18.10.2026): die Automatik raet das Motiv oft falsch, und ein Hinweis
+     * "Motiv zu hoch" zu etwas, das gar nicht gemeint war, stoert mehr als er hilft.
+     *
+     * Bis dahin zaehlen nur Horizont und tote Flaeche — und es gibt **keinen Score**: ohne
+     * Platzierung waere die Zahl nicht die Bewertung der Komposition, und ein "passt" waere
+     * Lob fuer etwas, das nicht geprueft wurde (siehe [Verdict.NoSubject]).
+     *
+     * Im Viewer bleibt es aus — gespeicherte Fotos lassen sich nicht antippen, sie wuerden
+     * sonst nie auf Platzierung bewertet.
+     */
+    private val placementNeedsPinnedSubject: Boolean = false,
 ) {
 
     fun assess(analysis: FrameAnalysis): CompositionAssessment {
+        if (placementNeedsPinnedSubject && analysis.pinnedSubject == null) {
+            return assessWithoutPlacement(analysis)
+        }
+
         // Alle Regeln auswerten, nicht nur bis zum ersten Hinweis: der Score braucht alle,
         // und der Drittel-Tracker braucht jedes Frame, sonst veraltet seine Hysterese,
         // sobald laengere Zeit eine hoeher priorisierte Regel greift.
@@ -86,10 +127,17 @@ class CompositionScorer(
         val horizon = HorizonRule.assess(analysis)
         val thirds = assessThirds(analysis)
         val deadSpace = DeadSpaceRule.assess(analysis)
+        val horizonPlacement = HorizonPlacementRule.assess(analysis)
 
-        val hint = portrait?.hint ?: horizon?.hint ?: thirds?.assessment?.hint ?: deadSpace?.hint
+        val hint = portrait?.hint
+            ?: ExposureRule.evaluate(analysis)
+            ?: horizon?.hint
+            ?: CameraPitchRule.evaluate(analysis)
+            ?: thirds?.assessment?.hint
+            ?: horizonPlacement?.hint
+            ?: deadSpace?.hint
 
-        val contentEvaluated = portrait != null || thirds != null || deadSpace != null
+        val contentEvaluated = portrait != null || thirds != null || deadSpace != null || horizonPlacement != null
         val score = if (contentEvaluated) {
             weightedScore(
                 listOfNotNull(
@@ -97,6 +145,7 @@ class CompositionScorer(
                     horizon?.let { it to WEIGHT_STRONG },
                     thirds?.let { it.assessment to WEIGHT_THIRDS * it.confidence },
                     deadSpace?.let { it to WEIGHT_DEAD_SPACE },
+                    horizonPlacement?.let { it to WEIGHT_HORIZON_PLACEMENT },
                 ),
             )
         } else {
@@ -109,6 +158,31 @@ class CompositionScorer(
             else -> Verdict.NoSubject
         }
         return CompositionAssessment(score = score, verdict = verdict)
+    }
+
+    /**
+     * Ohne angetipptes Motiv (siehe [placementNeedsPinnedSubject]): die App geht davon aus,
+     * dass das Bild kein bestimmtes Motiv hat, und gibt nur **allgemeine Tipps**, die fuer
+     * jedes Foto gelten — in derselben Rangfolge wie sonst, kein Score:
+     *  1. Kopf angeschnitten — kein Platzierungs-Tipp, sondern ein Fehler, der sich nicht
+     *     reparieren laesst. Ein erkanntes Gesicht am Bildrand ist auch ohne Tipp eindeutig.
+     *  2. Belichtung, 3. Horizont schief, 4. Kameraneigung, 5. Horizont in der Bildmitte,
+ *  6. leere Bildhaelfte.
+     * Ist nichts zu beanstanden, laedt [Verdict.AwaitingSubject] zum Antippen ein.
+     */
+    private fun assessWithoutPlacement(analysis: FrameAnalysis): CompositionAssessment {
+        // Der Drittel-Zielpunkt einer frueheren Auswahl hat zur jetzigen keinen Bezug mehr.
+        thirdsTracker.reset()
+        val hint = PortraitFramingRule.evaluate(analysis)
+            ?: ExposureRule.evaluate(analysis)
+            ?: HorizonRule.evaluate(analysis)
+            ?: CameraPitchRule.evaluate(analysis)
+            ?: HorizonPlacementRule.evaluate(analysis)
+            ?: DeadSpaceRule.evaluate(analysis)
+        return CompositionAssessment(
+            score = null,
+            verdict = hint?.let { Verdict.Fix(it) } ?: Verdict.AwaitingSubject,
+        )
     }
 
     /**
@@ -146,5 +220,6 @@ class CompositionScorer(
         const val WEIGHT_STRONG = 1f
         const val WEIGHT_THIRDS = 0.6f
         const val WEIGHT_DEAD_SPACE = 0.7f
+        const val WEIGHT_HORIZON_PLACEMENT = 0.5f
     }
 }

@@ -47,8 +47,14 @@ internal class HorizonSensor(context: Context) : SensorEventListener {
     @Volatile
     var displayRotation: Int = Surface.ROTATION_0
 
+    @Volatile
+    private var pitchDegrees: Float? = null
+
     /** Aktuelle Neigung, oder null solange noch kein Sensorwert da ist. */
     fun currentTiltDegrees(): Float? = tiltDegrees
+
+    /** Neigung der Kamera nach oben/unten, siehe [pitchFromGravity]. */
+    fun currentPitchDegrees(): Float? = pitchDegrees
 
     fun start() {
         val manager = sensorManager ?: return
@@ -61,6 +67,7 @@ internal class HorizonSensor(context: Context) : SensorEventListener {
     fun stop() {
         sensorManager?.unregisterListener(this)
         tiltDegrees = null
+        pitchDegrees = null
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -68,6 +75,11 @@ internal class HorizonSensor(context: Context) : SensorEventListener {
             gravityX = event.values[0],
             gravityY = event.values[1],
             displayRotation = displayRotation,
+        )
+        pitchDegrees = pitchFromGravity(
+            gravityX = event.values[0],
+            gravityY = event.values[1],
+            gravityZ = event.values[2],
         )
     }
 
@@ -120,4 +132,24 @@ private fun normalizeDegrees(degrees: Float): Float {
     // Auf eine Nachkommastelle runden: der Sensor rauscht ohnehin staerker, und ein
     // zappelnder Wert wuerde die UI unnoetig neu zeichnen lassen.
     return (value * 10f).roundToInt() / 10f
+}
+
+/**
+ * Wie weit die **Rueckkamera** nach oben (positiv) oder unten (negativ) zeigt, in Grad.
+ * 0 = waagerecht, +90 = senkrecht in den Himmel, -90 = senkrecht auf den Boden.
+ *
+ * Herleitung, weil das Vorzeichen leicht kippt: Der Sensor liest den Vektor nach *oben*
+ * (aufrecht +Y, flach mit Bildschirm nach oben +Z, siehe [tiltFromGravity]). Die Rueckkamera
+ * blickt entgegen der Bildschirm-Normalen (-Z). Zeigt sie nach oben, neigt sich der Bildschirm
+ * nach unten — der Aufwaertsvektor hat dann eine *negative* Z-Komponente. Also
+ * `atan2(-z, waagerechter Anteil)`. Der waagerechte Anteil ist `hypot(x, y)` und damit
+ * unabhaengig davon, ob das Geraet hoch oder quer gehalten wird.
+ *
+ * Fuer die Frontkamera gilt das Vorzeichen umgekehrt — dort wird der Wert nicht verwendet.
+ */
+internal fun pitchFromGravity(gravityX: Float, gravityY: Float, gravityZ: Float): Float? {
+    val horizontal = hypot(gravityX, gravityY)
+    if (horizontal == 0f && gravityZ == 0f) return null
+    val degrees = Math.toDegrees(atan2(-gravityZ.toDouble(), horizontal.toDouble())).toFloat()
+    return (degrees * 10f).roundToInt() / 10f
 }
